@@ -723,55 +723,51 @@ def Edletzberger_wheels(G,cut_triples_of_G=None):
         for wheel in wheels:
             yield wheel
 
-        
-def Edletzberger_B1(G,B,EV_cut_pairs_of_G=None,EV_cut_triples_of_G=None):
-    EV={v for v in G if len(G[v])>=3}
-    if EV_cut_pairs_of_G is None:
-        EVcuts=[C for C in cut_pairs(G) if len(set(C)&EV)==2]
-    else:
-        EVcuts=EV_cut_pairs_of_G
-    if EV_cut_triples_of_G is None:
-        EVtrips=[C for C in cut_triples(G) if len(set(C)&EV)==3]
-    else:
-        EVtrips=EV_cut_triples_of_G
-    return all(not is_separated_by(G,B,C) for C in EVcuts+EVtrips)
-   
-    
 
-def intersection_of_complementary_components(G,B,cuts,cutindex):
+def Edletzberger_B1(G,B,precomputed_two_ended_essential_special_subgroups=None):
     """
-    Recursively generate subsets of B that are not separted by any cut set of cuts in the graph G.
+    Check if the set B of essential  vertices of G satisfies condition B1.
     """
-    if cutindex==len(cuts):
-        yield B
+    if precomputed_two_ended_essential_special_subgroups is None:
+        EV={v for v in G if len(G[v])>=3}
+        T=two_ended_special_subgroups(G,EV)
     else:
-        C=cuts[cutindex]
-        H=G.copy()
-        H.remove_nodes_from(C)
-        for A in nx.connected_components(H):
-            closedhalf=set(A)|set(C)
-            Bprime=set(B)&closedhalf
-            if len(Bprime)>=4:
-                for Bpp in intersection_of_complementary_components(G,Bprime,cuts,cutindex+1):
-                    yield Bpp
+        T=precomputed_two_ended_essential_special_subgroups
+    return all(not is_separated_by(G,B,C) for C in T)
+   
+ 
                 
-def Edletzberger_B_sets(G,cut_pairs_of_G=None,cut_triples_of_G=None):
+def Edletzberger_B_sets(G):
     """
     Generate maximal sets of essential vertices of a 1--ended 2--dimensional RA Coxeter system defined by G that are not separated by any 2--ended special subgroup.
     """
     EV={v for v in G if len(G[v])>=3}
-    if len(EV)<4:
+    if len(EV)<4: # condition B3 can't be satisfied
         return
-    if cut_pairs_of_G is None:
-        EVpairs=[C for C in cut_pairs(G) if len(set(C)&EV)==2]
-    else:
-        EVpairs=[C for C in cut_pairs_of_G if len(set(C)&EV)==2]
-    if cut_triples_of_G is None:
-        EVtrips=[C for C in cut_triples(G) if len(set(C)&EV)==3]
-    else:
-        EVtrips=[C for C in cut_triples_of_G if len(set(C)&EV)==3]
-    EVcuts=EVpairs+EVtrips
-    for B in intersection_of_complementary_components(G,EV,EVcuts,0):
+    T=[C for C in two_ended_special_subgroups(G,EV)]
+    # consruct the poset of subsets of EV of size at least 4 that satisfy B1. Then we'll find the maximal elements. 
+    poset_of_B1_sets=nx.DiGraph()
+    for B in itertools.combinations(EV,4): # start with sets of size 4
+        if Edletzberger_B1(G,B,T):
+            poset_of_B1_sets.add_node(B)
+    newvertices={B for B in poset_of_B1_sets}
+    while newvertices:
+        B=newvertices.pop()
+        for v in EV-set(B):
+            superB=list(B)+[v,]
+            if Edletzberger_B1(G,superB,T):
+                superB.sort()
+                superB=tuple(superB)
+                if superB not in poset_of_B1_sets:
+                    poset_of_B1_sets.add_node(superB)
+                    newvertices.add(superB)
+                    for C in poset_of_B1_sets:
+                        if set(C)<set(superB):
+                            poset_of_B1_sets.add_edge(C,superB)
+                        elif set(superB)<set(C):
+                            poset_of_B1_sets.add_edge(superB,B)
+    # condition B2 is satisfied for the vertices of poset_of_B1_sets with no outgoing edges
+    for B in (node for node, out_degree in poset_of_B1_sets.out_degree() if out_degree == 0):
         yield B
 
 def graph_of_cylinders(G,subdivided_K4s_of_G=None,assume_triangle_free=False,assume_one_ended=False):
@@ -799,7 +795,7 @@ def graph_of_cylinders(G,subdivided_K4s_of_G=None,assume_triangle_free=False,ass
         else:
             wheels.append(tuple(set().union(w for w in W)))
     cylinders=[('C',(a,b),tuple(sorted(c for c in set(G[a])&set(G[b])))) for (a,b) in uncrossedcuts]+[('C',(a,b),tuple(sorted(d for d in set(G[a])&set(G[b])))) for (a,b,c) in uncrossedtrips]
-    rigid=[('R',)+tuple(sorted(B)) for B in Edletzberger_B_sets(G,cuts,trips)]
+    rigid=[('R',)+tuple(sorted(B)) for B in Edletzberger_B_sets(G)]
     hanging=[('H',)+tuple(sorted(set().union(*[set(x) for x in wheel]))) for wheel in wheels]+[('H',)+tuple(sorted(A)) for A in Edletzberger_A_sets(G,cuts,K4s) if not any(A<=support(C[1:]) for C in cylinders)]
     T=nx.Graph()
     T.add_nodes_from(cylinders+rigid+hanging)
@@ -925,7 +921,27 @@ def support(C):
     return set().union(*[set(x) for x in C])
 
 #-------------- general graph structure
-
+def two_ended_special_subgroups(G,V=None):
+    """
+    Generator that yields vertices of G that generate a two-ended subgroup of the RACG.
+    If V, a subset of vertices of G, is given, then only yield subsets of V.
+    """
+    if V is None:
+        theverts=[v for v in G]
+    else:
+        theverts=[v for v in V]
+    if len(theverts)<2:
+        return
+    theverts.sort()
+    for i in range(len(theverts)-1):
+        a=theverts[i]
+        for j in range(i+1,len(theverts)):
+            b=theverts[j]
+            if b not in G[a]:
+                yield (a,b)
+                for c in set(G[a])&set(G[b]):
+                    yield (a,c,b)
+                
 
 def triangles(G,V=None):
     """
@@ -937,7 +953,7 @@ def triangles(G,V=None):
     else:
         theverts=[v for v in V]
     if len(theverts)<3:
-        pass
+        return
     else:
         theverts.sort()
         for i in range(len(theverts)-2):
