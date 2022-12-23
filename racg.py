@@ -260,7 +260,18 @@ def minsquare_subgraphs(G):
     """
     SQ=square_graph(G)
     for C in nx.connected_components(SQ):
-        yield G.subgraph(support(G,C))
+        yield G.subgraph(support(C))
+
+def is_minsquare(G,V=None):
+    """
+    Determine if induced subgraph H of G spanned by V is a minsquare subgraph of G; that is, H is square-complete, contains a square, and is minimal among subgraphs of G with these properties.
+    If no H is given determine if G itself is minsquare.
+    """
+    if V is None:
+        verts=set(G)
+    else:
+        verts=V
+    return any(verts==set(H) for H in minsquare_subgraphs(G))
 
     
 def is_CFS(G):
@@ -689,6 +700,9 @@ def Edletzberger_A1A2_extensions(G,A,B,subdivided_K4s_of_G=None):
             yield A
 
 def Edletzberger_A_sets(G,cut_pairs_of_G=None,subdivided_K4s_of_G=None):
+    """
+    Yield sets satsifying conditions (A1), (A2), (A3) of Proposition 3.16.
+    """
     if subdivided_K4s_of_G is None:
         K4s=[x for x in subdivided_K4s(G)]
     else:
@@ -700,7 +714,8 @@ def Edletzberger_A_sets(G,cut_pairs_of_G=None,subdivided_K4s_of_G=None):
     for A in set(cuts)|set(G.edges()):
         B={v for v in set(G) if v>max(set(A))}
         for Aprime in Edletzberger_A1A2_extensions(G,set(A),B,K4s):
-            yield Aprime
+            if not is_clique(G,Aprime):
+                yield Aprime
 
 def Edletzberger_wheels(G,cut_triples_of_G=None):
     """
@@ -941,7 +956,9 @@ def two_ended_special_subgroups(G,V=None):
                 yield (a,b)
                 for c in set(G[a])&set(G[b]):
                     yield (a,c,b)
-                
+
+
+    
 
 def triangles(G,V=None):
     """
