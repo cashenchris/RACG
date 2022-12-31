@@ -370,13 +370,39 @@ def reductions(G):
                                            
 
 #------------- Dani Levcovitz conditions
-def Dani_Levcovitz_Theta_graph(Gamma,Lambda):
-    Theta=nx.Graph()
-    for e in Gamma.edges():
-        Theta.add_edge(*e)
-    for e in Lambda.edges():
-        Theta.add_edge(*e)
-    return Theta
+
+def Dani_Levcovitz(Gamma,Lambda,verbose=False):
+    """
+    Given a triangle-free CFS graph Gamma and a subgraph Lambda of the complementary graph, check if Lambda defines a finite index RAAG system according to Dani-Levcovitz Theorem 4.8.
+    """
+    Gammaprime=Gamma.subgraph([v for v in Gamma if Gamma.degree[v]<len(Gamma)])
+    if not Dani_Levcovitz_RAAG_system(Gamma,Lambda,verbose):
+        return False
+    if not set(Lambda)==set(Gammaprime):
+        if verbose:
+            print("Lambda does not have full support.")
+        return False
+    return  True 
+
+def find_Dani_Levcovitz_subgraph(Gamma,verbose=False):
+    """
+    Given a triangle-free CFS graph Gamma, find a subgraph Lambda of the complementary graph satisfying Dani-Levcovitz conditions. 
+    Return None if no such graph exists.
+    """
+    # this is very slow. Enumerates all possible Lambda and check if one of them satisfies conditions.
+    diagG=diagonal_graph(Gamma)
+    commutingGcomp=nx.Graph()
+    commutingGcomp.add_edges_from(v for v in diagG) # We do not need the entire complement graph of Gamma. Only edges that are the diagonal of an induced square have a chance to commute with another edge. Allowing other edges would just give isolated vertices of Delta.
+    # look at subgraphs of commutingGcomp with at most 2 components
+    for E in range(len(commutingGcomp.edges()),len(Gamma)//2-1,-1):
+        for edgeset in itertools.combinations(commutingGcomp.edges(),E):
+            Lambda=commutingGcomp.edge_subgraph(edgeset)
+            if Dani_Levcovitz(Gamma,Lambda): # check if Dani-Levcovitz conditions hold
+                return Lambda
+    return None
+
+
+
 
 def draw_Dani_Levcovitz_pair(Gamma,Lambda,**kwargs):
     Theta= Dani_Levcovitz_Theta_graph(Gamma,Lambda)
@@ -394,29 +420,21 @@ def draw_Dani_Levcovitz_pair(Gamma,Lambda,**kwargs):
     plt.show(block=False)
     return plot_instance
 
-def Dani_Levcovitz(Gamma,Lambda,verbose=False): # Theorem 4.8 of Dani-Levcovitz
-    Gammaprime=Gamma.subgraph([v for v in Gamma if Gamma.degree[v]<len(Gamma)])
-    if not Dani_Levcovitz_RAAG_system(Gamma,Lambda,verbose):
-        return False
-    if not set(Lambda)==set(Gammaprime):
-        if verbose:
-            print("Lambda does not have full support.")
-        return False
-    return  True 
 
-def find_Dani_Levcovitz_subgraph(Gamma,verbose=False):
-    diagG=diagonal_graph(Gamma)
-    commutingGcomp=nx.Graph()
-    commutingGcomp.add_edges_from(v for v in diagG) # We do not need the entire complement graph of Gamma. Only edges that are the diagonal of an induced square have a chance to commute with another edge. Allowing other edges would just give isolated vertices of Delta.
-    # look at subgraphs of commutingGcomp with at most 2 components
-    for E in range(len(commutingGcomp.edges()),len(Gamma)//2-1,-1):
-        for edgeset in itertools.combinations(commutingGcomp.edges(),E):
-            Lambda=commutingGcomp.edge_subgraph(edgeset)
-            if Dani_Levcovitz(Gamma,Lambda):
-                return Lambda
-    return None
 
-def Dani_Levcovitz_RAAG_system(Gamma,Lambda, verbose=False): # Theorem 3.18 of Dani-Levcovitz
+
+def Dani_Levcovitz_Theta_graph(Gamma,Lambda):
+    Theta=nx.Graph()
+    for e in Gamma.edges():
+        Theta.add_edge(*e)
+    for e in Lambda.edges():
+        Theta.add_edge(*e)
+    return Theta
+
+def Dani_Levcovitz_RAAG_system(Gamma,Lambda, verbose=False): 
+    """
+    Given a triangle free CFS graph Gamma and a subgraph Lambda of the complementary graph, check if Lambda defines a RAAG system of W_\Gamma, according to Dani-Levcovitz Theorem 3.18.
+    """
     if len([x for x in nx.connected_components(Lambda)])>2:
         if verbose:
             print("Lambda has more than two components.")
@@ -432,6 +450,7 @@ def Dani_Levcovitz_RAAG_system(Gamma,Lambda, verbose=False): # Theorem 3.18 of D
     return True
 
 def Dani_Levcovitz_R1(Gamma,Lambda,verbose=False):
+    # R1: Lambda is a forest
     for C in nx.connected_components(Lambda):
         if not nx.is_tree(Lambda.subgraph(C)):
             if verbose:
@@ -440,6 +459,7 @@ def Dani_Levcovitz_R1(Gamma,Lambda,verbose=False):
     return True
 
 def Dani_Levcovitz_R2(Gamma,Lambda,verbose=False):
+    # R2: Each component of Lambda is an induced subgraph of Theta
     Theta= Dani_Levcovitz_Theta_graph(Gamma,Lambda)
     for C in nx.connected_components(Lambda):
         if len(Theta.subgraph(C).edges())!=len(Lambda.subgraph(C).edges()):
@@ -479,41 +499,44 @@ def Dani_Levcovitz_R4(Gamma,Lambda,verbose=False):
                     return False
     return True
             
-                    
- 
-    
-    
-
-
 def two_component_cycles(Gamma,Lambda,n=None):
+    """
+    Generator of 2-component cycles. 
+    """
     C=[c for c in nx.connected_components(Lambda)]
     for cycle in itertools.chain.from_iterable(bicycles(Gamma,C[i],C[j],n) for i,j in itertools.combinations(range(len(C)),2)):
         yield cycle
 
 def bicycles(G,A,B,n=None):
+    """
+    Given a graph G and disjoint sets of vertices A and B and an even number n, inductively generate cycles of length n in G whose vertices alternate between A and B.
+    If no n is given then generate cycles of all possible lengths. 
+    We assume that vertices of G are comparable so that we can restrict to cycles that are lexicographically minimal among permutations by change of starting vertex and direction, subject to starting in set A. 
+    """
     if n is None:
         for cycle in itertools.chain.from_iterable(bicycles(G,A,B,2*m) for m in range(2,1+min(len(A),len(B)))):
             yield cycle
     else:
-        assert(n%2==0)
-        for a in A:
-            remainingA={x for x in A if x>a}
-            remainingB={x for x in B}
-            for cycle in extendbicycle(G,remainingA,remainingB,[a,],n):
-                if cycle[1]<cycle[-1]:
-                    yield cycle 
+        assert(n%2==0 and n>=4)
+        for firstA in A:
+            for firstB in B:
+                for lastB in {b for b in B if b>firstB}: # ensure that lastB is greater than the firstB so that resulting cycle is lex minimal up to reversal
+                    remainingA={x for x in A if x>firstA} # ensure that all other A vertices are greater than firstA so that resulting cycle is lex minimal up to change of starting vertex in A.
+                    remainingB={x for x in B if x not in {firstB,lastB}}
+                    for cycle in extendbicycle(G,remainingB,remainingA,[lastB,firstA,firstB],n):
+                        yield cycle[1:]+cycle[0:1] # cycle that we actually yield is of form [firstA,firstB,....,lastB]
                         
-def extendbicycle(G,remainingA,remainingB,currentcycle,n):
-    if len(currentcycle)==n-1:
-        for b in remainingB&set(G[currentcycle[-1]])&set(G[currentcycle[0]]):
-             yield currentcycle+[b,]
-    elif len(currentcycle)%2:
-        for b in remainingB&set(G[currentcycle[-1]]):
-            for thecycle in extendbicycle(G,remainingA,remainingB-set([b]),currentcycle+[b,],n):
+def extendbicycle(G, remaining_even_index_vertices, remaining_oddindex_vertices, currentcycle, n):
+    if len(currentcycle)==n-1: #only need one more vertex to complete the cycle
+        for final_vertex in remaining_oddindex_vertices & set(G[currentcycle[-1]]) & set(G[currentcycle[0]]): # a vertex that is in remaining_odd_index_vertices and is adjacent to previous vertex and to initial vertex so that we make a closed cycle
+             yield currentcycle+[final_vertex,]
+    elif len(currentcycle)%2: # current length is odd, so last index is even, so next index is odd 
+        for b in remaining_oddindex_vertices & set(G[currentcycle[-1]]):
+            for thecycle in extendbicycle(G,remaining_even_index_vertices,remaining_oddindex_vertices-set([b]),currentcycle+[b,],n):
                 yield thecycle
-    else:
-        for a in remainingA&set(G[currentcycle[-1]]):
-            for thecycle in extendbicycle(G,remainingA-set([a]),remainingB,currentcycle+[a,],n):
+    else: # next index is even
+        for a in remaining_even_index_vertices & set(G[currentcycle[-1]]):
+            for thecycle in extendbicycle(G,remaining_even_index_vertices-set([a]),remaining_oddindex_vertices,currentcycle+[a,],n):
                 yield thecycle
 
 
