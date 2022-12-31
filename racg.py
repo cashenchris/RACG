@@ -14,18 +14,39 @@ with open('mincfs_graphs_up_to_10.pkl','rb') as mmyfile:
 """
 
 
-def draw(G,H=None,**kwargs):
+def draw(G,H=None,K=None,**kwargs):
     """
-    Draw the graph G as an editable graph. If a subgraph H is given then the edges of H will be colored in a different color than those of G. Other kwargs passed to netgraph.
+    Draw the graph G as an editable graph.
+    By default edges of G are black.
+    If a subgraph H is given then its edges are red.
+    If a subgraph K is given its edges are blue.
+    If both H and K are given then their common edges are purple.  
+    Other kwargs passed to netgraph.
     """
     edge_color=dict()
-    if H is None:
+    if H is None and K is None:
         for e in G.edges():
             edge_color[e]='black'
-    else:
+    elif K is None:
         for e in G.edges():
             if e in H.edges():
                 edge_color[e]='red'
+            else:
+                edge_color[e]='black'
+    elif H is None:
+        for e in G.edges():
+            if e in K.edges():
+                edge_color[e]='blue'
+            else:
+                edge_color[e]='black'
+    else:
+        for e in G.edges():
+            if e in K.edges() and e in H.edges():
+                edge_color[e]='purple'
+            elif e in H.edges():
+                edge_color[e]='red'
+            elif e in K.edges():
+                edge_color[e]='blue'
             else:
                 edge_color[e]='black'
     plot_instance = netgraph.EditableGraph(G,node_labels=True,node_label_fontdict=dict(size=11),edge_color=edge_color,**kwargs)
@@ -316,18 +337,26 @@ def is_strongly_CFS(G):
         return False
     return support(sg)==set(Gprime)
 
-def distillations(G):
+def distillations(G,only_minCFS=False,non_cone=False):
     """
     Yield subgraphs A and B of G so that G splits as an amalgam A*_C B whose factors are CFS, such that C=A&B is not a clique.
     """
     for A in itertools.chain.from_iterable(itertools.combinations(G,n) for n in range(3,len(G))):
-        if not is_CFS(G.subgraph(A)):
+        if not is_CFS(G.subgraph(A)) or (only_minCFS and not is_minimal_CFS(G)):
             continue
         for C in itertools.chain.from_iterable(itertools.combinations(A,n) for n in range(2,len(A))):
             if is_clique(G,C):
                 continue
+            if non_cone and len(A)-len(C)==1:
+                v=next(iter(set(A)-set(C)))
+                if len(G.subgraph(A)[v])==len(C):
+                    continue
             B=set(C)|(set(G)-set(A))
-            if is_CFS(G.subgraph(B)):
+            if (not only_minCFS and is_CFS(G.subgraph(B))) or is_minimal_CFS(G.subgraph(B)):
+                if non_cone and len(B)-len(C)==1:
+                    v=next(iter(set(B)-set(C)))
+                    if len(G.subgraph(B)[v])==len(C):
+                        continue
                 yield G.subgraph(A),G.subgraph(B)
 
 def reductions(G):
@@ -866,21 +895,10 @@ def get_CFS_spanning_subgraph(G,max_edges_to_remove=1):
     return None
 
 def is_minCFS_hierarchy(G):
-    if is_induced_square(G,G):
-        return True
-    if len(G)<=4:
-        return False
-    if not is_minimal_CFS(G):
-        return False
-    for v in G:
-        if len(G[v])!=2:
-            continue
-        H=G.subgraph([w for w in G if w!=v])
-        if is_minCFS_hierarchy(H):
-            return True
-    return False
+    return bool(get_minCFS_hierarchy(G))
 
 def get_minCFS_hierarchy(G):
+    T=get_iterated_construction(G,max_cone_size=2,only_minCFS=True)
     if is_induced_square(G,G):
         return [G,]
     if len(G)<=4:
@@ -898,6 +916,51 @@ def get_minCFS_hierarchy(G):
             return [G,]+subhierarchy
     return list([])
 
+
+def get_iterated_construction(G,max_cone_size=float('inf'),only_minCFS=False,only_cones=False):
+    """
+    Return a rooted directed tree T whose source vertex is the graph G and such that at each vertex H there are the following possibiliies:
+    H is a square graph and T has no outgoing edges at H
+    There is a CFS subgraph H' = H - {v}, and T has a single outgoing edge at H going to H'
+    H splits as an amalgam of CFS subgraphs A and B, and T has 2 outgoing edges at H, going to A and B
+
+    If only_cones=True only check for splittings as cone of a subgraph, not as amalgam.
+
+    Return an empty tree if G is not CFS.
+    """
+    # search prefers coning over amalgams, so if it is possible to build G via a sequence of cones offs then the resulting T will be a line where each edge is a cone off. 
+    T=nx.DiGraph()
+    if is_induced_square(G,G):
+        T.add_node(G)
+        return T
+    if not is_CFS(G):
+        return T
+    if only_minCFS and not is_minimal_CFS(G):
+        return T
+    for v in G:
+        if len(G[v])>max_cone_size:
+            continue
+        H=G.subgraph([w for w in G if w!=v])
+        if only_minCFS and not is_minimal_CFS(H):
+            continue
+        subtree=get_iterated_construction(H,max_cone_size,only_minCFS)
+        if subtree:
+            T.add_edges_from(subtree.edges())
+            T.add_edge(G,H)
+            return T
+    if not only_cones:
+        for A,B in distillations(G,only_minCFS=only_minCFS,non_cone=True):
+            sgA=G.subgraph(A)
+            sgB=G.subgraph(B)
+            subtreeA=get_iterated_construction(sgA,max_cone_size,only_minCFS)
+            subtreeB=get_iterated_construction(sgB,max_cone_size,only_minCFS)
+            if subtreeA and subtreeB:
+                T.add_edges_from(subtreeA.edges())
+                T.add_edges_from(subtreeB.edges())
+                T.add_edge(G,sgA)
+                T.add_edge(G,sgB)
+                return T
+    return T
 
 
 def square_graph(G):
@@ -1132,6 +1195,19 @@ def color_verts(G):
         G.nodes[nodelist[i]]['color']=plt.cm.gist_rainbow(.1+i/(len(nodelist)+1))
         
 # some example graphs
+
+def Davis_Januskiewicz(Gamma):
+    """
+    Given a graph Gamma defining a right-angled Artin group G, return a graph defining a right-angled Coxeter group that is commensurable to G. This is the graph Gamma' of Davis-Januskiewicz 2000.
+    """
+    Gammaprime=nx.Graph()
+    for v,w in Gamma.edges():
+        Gammaprime.add_edge((v,1),(w,-1))
+        Gammaprime.add_edge((v,-1),(w,1))
+        Gammaprime.add_edge((v,1),(w,1))
+        Gammaprime.add_edge((v,-1),(w,-1))
+    return Gammaprime
+
 def suspension(n):
     G=nx.graph()
     for i in range(1,n+1):
