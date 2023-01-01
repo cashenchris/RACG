@@ -376,33 +376,13 @@ def Dani_Levcovitz(Gamma,Lambda,verbose=False):
     Given a triangle-free CFS graph Gamma and a subgraph Lambda of the complementary graph, check if Lambda defines a finite index RAAG system according to Dani-Levcovitz Theorem 4.8.
     """
     Gammaprime=Gamma.subgraph([v for v in Gamma if Gamma.degree[v]<len(Gamma)])
-    if not Dani_Levcovitz_RAAG_system(Gamma,Lambda,verbose):
-        return False
     if not set(Lambda)==set(Gammaprime):
         if verbose:
             print("Lambda does not have full support.")
         return False
+    if not Dani_Levcovitz_RAAG_system(Gamma,Lambda,verbose):
+        return False
     return  True 
-
-def find_Dani_Levcovitz_subgraph(Gamma,verbose=False):
-    """
-    Given a triangle-free CFS graph Gamma, find a subgraph Lambda of the complementary graph satisfying Dani-Levcovitz conditions. 
-    Return None if no such graph exists.
-    """
-    # this is very slow. Enumerates all possible Lambda and check if one of them satisfies conditions.
-    diagG=diagonal_graph(Gamma)
-    commutingGcomp=nx.Graph()
-    commutingGcomp.add_edges_from(v for v in diagG) # We do not need the entire complement graph of Gamma. Only edges that are the diagonal of an induced square have a chance to commute with another edge. Allowing other edges would just give isolated vertices of Delta.
-    # look at subgraphs of commutingGcomp with at most 2 components
-    for E in range(len(commutingGcomp.edges()),len(Gamma)//2-1,-1):
-        for edgeset in itertools.combinations(commutingGcomp.edges(),E):
-            Lambda=commutingGcomp.edge_subgraph(edgeset)
-            if Dani_Levcovitz(Gamma,Lambda): # check if Dani-Levcovitz conditions hold
-                return Lambda
-    return None
-
-
-
 
 def draw_Dani_Levcovitz_pair(Gamma,Lambda,**kwargs):
     Theta= Dani_Levcovitz_Theta_graph(Gamma,Lambda)
@@ -420,6 +400,67 @@ def draw_Dani_Levcovitz_pair(Gamma,Lambda,**kwargs):
     plt.show(block=False)
     return plot_instance
 
+
+def find_Dani_Levcovitz_subgraph(Gamma,verbose=False):
+    """
+    Given a triangle-free CFS graph Gamma, find a subgraph Lambda of the complementary graph satisfying Dani-Levcovitz conditions. 
+    Return None if no such graph exists.
+    """
+    # this is very slow. Enumerates all possible Lambda and check if one of them satisfies conditions.
+    # Lambda must have exactly 2 components. Dan-Levcovitz, Fig 3.10, show that more than 2 components implies Gamma contains a triangle. But Lambda can't contain only one component if it is induced and has full support unless Gamma is discrete, which it is not, since it is assumed to be CFS.
+    # Lambda must be contained in the subgraph of the complement of G consisting of edges that are diagonals of induced squares, since any other edge would give an isolated vertex in the defining graph of the RAAG, but our W_Gamma is 1-ended, so the RAAG should not have isolated vertices.
+    # enumerate non-spanning subtrees Lambda1 of the commuting complementary graph. This will be one component of prospective Lambda. Then enumerate spanning subtrees Lambda2 of commutingGcomp - Lambda1. Lambda2 must be spanning so that Lambda=Lambda1 U Lambda2 has full support.
+    diagG=diagonal_graph(Gamma)
+    commutingGcomp=nx.Graph()
+    commutingGcomp.add_edges_from(v for v in diagG) # We do not need the entire complement graph of Gamma. Only edges that are the diagonal of an induced square have a chance to commute with another edge. Allowing other edges would just give isolated vertices of Delta.
+    min_vertex=min(Gamma) # since Lambda1 and Lambda2 should span Gamma, we may assume Lambda1 contains the min_vertex of Gamma
+    for Lambda1 in Theta_induced_rooted_complementary_subtrees(Gamma, commutingGcomp, commutingGcomp.subgraph([min_vertex,]), set([min_vertex,])):
+        if Lambda1.edges() and len(Lambda1)<=len(Gamma)-2: # Lambda1 should contain at least one edge and leave room for Lambda2 to contain at least one edge
+            remaining_cGc=commutingGcomp.subgraph({v for v in Gamma if v not in Lambda1})
+            if nx.is_connected(remaining_cGc):
+                for Lambda2 in nx.algorithms.tree.mst.SpanningTreeIterator(remaining_cGc):
+                    Lambda=nx.Graph()
+                    Lambda.add_edges_from(Lambda1.edges())
+                    Lambda.add_edges_from(Lambda2.edges())
+                    if Dani_Levcovitz(Gamma,Lambda): # check if Dani-Levcovitz conditions hold. By construction, Lambda should be a 2 component induced spanning forest.
+                        return Lambda
+                
+    # look at subgraphs of commutingGcomp with at most 2 components
+    #for E in range(len(commutingGcomp.edges()),len(Gamma)//2-1,-1):
+    #    for edgeset in itertools.combinations(commutingGcomp.edges(),E):
+    #        Lambda=commutingGcomp.edge_subgraph(edgeset)
+    #        if Dani_Levcovitz(Gamma,Lambda): # check if Dani-Levcovitz conditions hold
+    #            return Lambda
+    return None
+
+
+def Theta_induced_rooted_complementary_subtrees(Gamma, commutingGcomp, current_tree, current_buds):
+    """
+    Generate subtrees of commutingGcomp contianing current_tree such that no two vertices are connected by an edge of Gamma.
+    """
+    if not current_buds:
+       yield current_tree
+    else:
+        current_bud=min(current_buds)
+        if len(current_tree)==1:
+            outgoing_neighbors=set(commutingGcomp[current_bud])
+        else:
+            stem=next(iter(current_tree[current_bud]))
+            outgoing_neighbors=set(commutingGcomp[current_bud])-set([stem,])
+        for new_growth in itertools.chain.from_iterable(itertools.combinations(outgoing_neighbors,n) for n in range(len(outgoing_neighbors)+1)):
+            Theta=Dani_Levcovitz_Theta_graph(Gamma,current_tree)
+            if any(set(Theta[v]) & (set(new_growth) | set(current_tree)) for v in new_growth): #if  current_tree U newgrowth not Theta-induced
+                continue
+            new_tree=current_tree.copy()
+            for v in new_growth:
+                new_tree.add_edge(current_bud,v)
+            next_buds=(set(new_growth) | current_buds)-set([current_bud,])
+            for T in Theta_induced_rooted_complementary_subtrees(Gamma, commutingGcomp, new_tree, next_buds):
+                yield T
+        
+
+        
+        
 
 
 
@@ -469,6 +510,7 @@ def Dani_Levcovitz_R2(Gamma,Lambda,verbose=False):
     return True
     
 def Dani_Levcovitz_R3(Gamma,Lambda,verbose=False):
+    # R3: Gamma contains the join of the Lambda-convex hulls of 2 component squares
     for S in two_component_cycles(Gamma,Lambda,4):
         Tc=convex_hull(Lambda,{S[0],S[2]})
         Td=convex_hull(Lambda,{S[1],S[3]})
@@ -480,19 +522,20 @@ def Dani_Levcovitz_R3(Gamma,Lambda,verbose=False):
     return True
 
 def Dani_Levcovitz_R4(Gamma,Lambda,verbose=False):
+    # R4: Every edge of a 2 component cycle is contained in a 2 component square of Theta with its vertices in the Lamdba-hulls of of the vertices of the original cycle
     C=[g for g in nx.connected_components(Lambda)]
     for i,j in itertools.combinations(range(len(C)),2):
-        for cycle in bicycles(Gamma,C[i],C[j]):
+        for cycle in bicycles(Gamma,C[i],C[j]): 
             cs={cycle[2*i] for i in range(len(cycle)//2)}
             ds={cycle[2*i+1] for i in range(len(cycle)//2)}
             Tc=convex_hull(Lambda,cs)
             Td=convex_hull(Lambda,ds)
             allowed_edges=set()
-            for square in bicycles(Gamma,Tc,Td,4):
+            for square in bicycles(Gamma,Tc,Td,4): # enumerate the 2 component squares with vertices in Tc and Td and take the collection of all their edges. These are the allowed edges. 
                 for k in range(4):
                     allowed_edges.add((square[k],square[(k+1)%4]))
                     allowed_edges.add((square[(k+1)%4],square[k]))
-            for k in range(len(cycle)):
+            for k in range(len(cycle)): # check if all the edges of the cycle are in the set of allowed edges
                 if (cycle[k],cycle[(k+1)%len(cycle)]) not in allowed_edges:
                     if verbose:
                         print("Condition R4 fails. For 2 component cycle "+str(cycle)+",  edge"+str((cycle[k],cycle[(k+1)%len(cycle)]))+" is not contained in 2 component square.")
