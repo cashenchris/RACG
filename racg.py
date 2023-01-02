@@ -406,7 +406,6 @@ def find_Dani_Levcovitz_subgraph(Gamma,verbose=False):
     Given a triangle-free CFS graph Gamma, find a subgraph Lambda of the complementary graph satisfying Dani-Levcovitz conditions. 
     Return None if no such graph exists.
     """
-    # this is very slow. Enumerates all possible Lambda and check if one of them satisfies conditions.
     # Lambda must have exactly 2 components. Dan-Levcovitz, Fig 3.10, show that more than 2 components implies Gamma contains a triangle. But Lambda can't contain only one component if it is induced and has full support unless Gamma is discrete, which it is not, since it is assumed to be CFS.
     # Lambda must be contained in the subgraph of the complement of G consisting of edges that are diagonals of induced squares, since any other edge would give an isolated vertex in the defining graph of the RAAG, but our W_Gamma is 1-ended, so the RAAG should not have isolated vertices.
     # enumerate non-spanning subtrees Lambda1 of the commuting complementary graph. This will be one component of prospective Lambda. Then enumerate spanning subtrees Lambda2 of commutingGcomp - Lambda1. Lambda2 must be spanning so that Lambda=Lambda1 U Lambda2 has full support.
@@ -417,12 +416,12 @@ def find_Dani_Levcovitz_subgraph(Gamma,verbose=False):
     for Lambda1 in Theta_induced_rooted_complementary_subtrees(Gamma, commutingGcomp, commutingGcomp.subgraph([min_vertex,]), set([min_vertex,])):
         if Lambda1.edges() and len(Lambda1)<=len(Gamma)-2: # Lambda1 should contain at least one edge and leave room for Lambda2 to contain at least one edge
             remaining_cGc=commutingGcomp.subgraph({v for v in Gamma if v not in Lambda1})
-            if nx.is_connected(remaining_cGc):
+            if nx.is_connected(remaining_cGc): # need this check because nx.algorithms.tree.mst.SpanningTreeIterator actually returns spanning forests if the input graph is not connected. 
                 for Lambda2 in nx.algorithms.tree.mst.SpanningTreeIterator(remaining_cGc):
                     Lambda=nx.Graph()
                     Lambda.add_edges_from(Lambda1.edges())
                     Lambda.add_edges_from(Lambda2.edges())
-                    if Dani_Levcovitz(Gamma,Lambda): # check if Dani-Levcovitz conditions hold. By construction, Lambda should be a 2 component induced spanning forest.
+                    if Dani_Levcovitz(Gamma,Lambda): # check if Dani-Levcovitz conditions hold. 
                         return Lambda
                 
     # look at subgraphs of commutingGcomp with at most 2 components
@@ -431,6 +430,23 @@ def find_Dani_Levcovitz_subgraph(Gamma,verbose=False):
     #        Lambda=commutingGcomp.edge_subgraph(edgeset)
     #        if Dani_Levcovitz(Gamma,Lambda): # check if Dani-Levcovitz conditions hold
     #            return Lambda
+    return None
+
+def old_find_Dani_Levcovitz_subgraph(Gamma,verbose=False):
+    """
+    Given a triangle-free CFS graph Gamma, find a subgraph Lambda of the complementary graph satisfying Dani-Levcovitz conditions. 
+    Return None if no such graph exists.
+    """
+    diagG=diagonal_graph(Gamma)
+    commutingGcomp=nx.Graph()
+    commutingGcomp.add_edges_from(v for v in diagG) # We do not need the entire complement graph of Gamma. Only edges that are the diagonal of an induced square have a chance to commute with another edge. Allowing other edges would just give isolated vertices of Delta.
+
+    # look at subgraphs of commutingGcomp with at most 2 components
+    for E in range(len(commutingGcomp.edges()),len(Gamma)//2-1,-1):
+        for edgeset in itertools.combinations(commutingGcomp.edges(),E):
+            Lambda=commutingGcomp.edge_subgraph(edgeset)
+            if Dani_Levcovitz(Gamma,Lambda): # check if Dani-Levcovitz conditions hold
+                return Lambda
     return None
 
 
@@ -562,8 +578,8 @@ def bicycles(G,A,B,n=None):
     else:
         assert(n%2==0 and n>=4)
         for firstA in A:
-            for firstB in B:
-                for lastB in {b for b in B if b>firstB}: # ensure that lastB is greater than the firstB so that resulting cycle is lex minimal up to reversal
+            for firstB in set(B)&set(G[firstA]):
+                for lastB in {b for b in B if b>firstB}&set(G[firstA]): # ensure that lastB is greater than the firstB so that resulting cycle is lex minimal up to reversal
                     remainingA={x for x in A if x>firstA} # ensure that all other A vertices are greater than firstA so that resulting cycle is lex minimal up to change of starting vertex in A.
                     remainingB={x for x in B if x not in {firstB,lastB}}
                     for cycle in extendbicycle(G,remainingB,remainingA,[lastB,firstA,firstB],n):
