@@ -295,12 +295,15 @@ def is_minsquare(G,V=None):
     return any(verts==set(H) for H in minsquare_subgraphs(G))
 
     
-def is_CFS(G):
+def is_CFS(G,precomputed_diagonal_graph=None):
     """
     True if G is a CFS graph, which means that, modulo deleting a join, the square graph of G contains a component with full support.
     """
     Gprime=G.subgraph([v for v in G if G.degree[v]<len(G)])
-    dg=diagonal_graph(Gprime)
+    if precomputed_diagonal_graph is None:
+        dg=diagonal_graph(Gprime)
+    else:
+        dg=precomputed_diagonal_graph
     if not dg:
         return not bool(Gprime)
     theverts=set(Gprime)
@@ -401,7 +404,7 @@ def draw_Dani_Levcovitz_pair(Gamma,Lambda,**kwargs):
     return plot_instance
 
 
-def find_Dani_Levcovitz_subgraph(Gamma,verbose=False):
+def find_Dani_Levcovitz_subgraph(Gamma,verbose=False,assume_triangle_free=False,assume_CFS=False):
     """
     Given a triangle-free CFS graph Gamma, find a subgraph Lambda of the complementary graph satisfying Dani-Levcovitz conditions. 
     Return None if no such graph exists.
@@ -409,27 +412,29 @@ def find_Dani_Levcovitz_subgraph(Gamma,verbose=False):
     # Lambda must have exactly 2 components. Dan-Levcovitz, Fig 3.10, show that more than 2 components implies Gamma contains a triangle. But Lambda can't contain only one component if it is induced and has full support unless Gamma is discrete, which it is not, since it is assumed to be CFS.
     # Lambda must be contained in the subgraph of the complement of G consisting of edges that are diagonals of induced squares, since any other edge would give an isolated vertex in the defining graph of the RAAG, but our W_Gamma is 1-ended, so the RAAG should not have isolated vertices.
     # enumerate non-spanning subtrees Lambda1 of the commuting complementary graph. This will be one component of prospective Lambda. Then enumerate spanning subtrees Lambda2 of commutingGcomp - Lambda1. Lambda2 must be spanning so that Lambda=Lambda1 U Lambda2 has full support.
+    if not assume_triangle_free:
+        if not is_triangle_free(Gamma):
+            NotImplemented
     diagG=diagonal_graph(Gamma)
+    if not is_CFS(Gamma,precomputed_diagonal_graph=diagG):
+        raise ValueError("Gamma is not a CFS graph.")
     commutingGcomp=nx.Graph()
     commutingGcomp.add_edges_from(v for v in diagG) # We do not need the entire complement graph of Gamma. Only edges that are the diagonal of an induced square have a chance to commute with another edge. Allowing other edges would just give isolated vertices of Delta.
-    min_vertex=min(Gamma) # since Lambda1 and Lambda2 should span Gamma, we may assume Lambda1 contains the min_vertex of Gamma
-    for Lambda1 in Theta_induced_rooted_complementary_subtrees(Gamma, commutingGcomp, commutingGcomp.subgraph([min_vertex,]), set([min_vertex,])):
-        if Lambda1.edges() and len(Lambda1)<=len(Gamma)-2: # Lambda1 should contain at least one edge and leave room for Lambda2 to contain at least one edge
-            remaining_cGc=commutingGcomp.subgraph({v for v in Gamma if v not in Lambda1})
-            if nx.is_connected(remaining_cGc): # need this check because nx.algorithms.tree.mst.SpanningTreeIterator actually returns spanning forests if the input graph is not connected. 
-                for Lambda2 in nx.algorithms.tree.mst.SpanningTreeIterator(remaining_cGc):
-                    Lambda=nx.Graph()
-                    Lambda.add_edges_from(Lambda1.edges())
-                    Lambda.add_edges_from(Lambda2.edges())
-                    if Dani_Levcovitz(Gamma,Lambda): # check if Dani-Levcovitz conditions hold. 
-                        return Lambda
-                
-    # look at subgraphs of commutingGcomp with at most 2 components
-    #for E in range(len(commutingGcomp.edges()),len(Gamma)//2-1,-1):
-    #    for edgeset in itertools.combinations(commutingGcomp.edges(),E):
-    #        Lambda=commutingGcomp.edge_subgraph(edgeset)
-    #        if Dani_Levcovitz(Gamma,Lambda): # check if Dani-Levcovitz conditions hold
-    #            return Lambda
+    try:
+        A,B=bipartition(Gamma)
+    except ValueError: # commutingGcomp is not bipartite
+        return None
+    Apart=commutingGcomp.subgraph(A)
+    Bpart=commutingGcomp.subgraph(B)
+    if not Apart.edges() or not Bpart.edges():
+        return None
+    for Lambda1 in nx.algorithms.tree.mst.SpanningTreeIterator(Apart):
+        for Lambda2 in nx.algorithms.tree.mst.SpanningTreeIterator(Bpart):
+            Lambda=nx.Graph()
+            Lambda.add_edges_from(Lambda1.edges())
+            Lambda.add_edges_from(Lambda2.edges())
+            if Dani_Levcovitz(Gamma,Lambda): # check if Dani-Levcovitz conditions hold. 
+                return Lambda
     return None
 
 def old_find_Dani_Levcovitz_subgraph(Gamma,verbose=False):
@@ -452,7 +457,7 @@ def old_find_Dani_Levcovitz_subgraph(Gamma,verbose=False):
 
 def Theta_induced_rooted_complementary_subtrees(Gamma, commutingGcomp, current_tree, current_buds):
     """
-    Generate subtrees of commutingGcomp contianing current_tree such that no two vertices are connected by an edge of Gamma.
+    Generate subtrees of commutingGcomp containing current_tree such that no two vertices are connected by an edge of Gamma.
     """
     if not current_buds:
        yield current_tree
@@ -1081,6 +1086,25 @@ def support(C):
     return set().union(*[set(x) for x in C])
 
 #-------------- general graph structure
+def bipartition(G):
+    """
+    Given a graph G, return two disjoint subset of vertices such that each set contains no adjacent vertices, and their union is all vertices of G. 
+    Raise an error if G is not bipartite.
+    """
+    spheres=dict()
+    radius=0
+    spheres[-1]=set([])
+    spheres[0]=set([min(C) for C in nx.connected_components(G)])
+    while sum(len(spheres[r]) for r in spheres)<len(G):
+        next_sphere=(set().union(*[set(G[v]) for v in spheres[radius]]))-(spheres[radius]|spheres[radius-1])
+        if G.subgraph(next_sphere).edges():
+            raise ValueError("Input graph is not bipartite")
+        radius+=1
+        spheres[radius]=next_sphere
+    return set().union(*[spheres[r] for r in spheres if not r%2]),set().union(*[spheres[r] for r in spheres if  r%2])
+    
+
+
 def two_ended_special_subgroups(G,V=None):
     """
     Generator that yields vertices of G that generate a two-ended subgroup of the RACG.
