@@ -344,10 +344,11 @@ def distillations(G,only_minCFS=False,non_cone=False):
     """
     Yield subgraphs A and B of G so that G splits as an amalgam A*_C B whose factors are CFS, such that C=A&B is not a clique.
     """
+    # We may assume |A|<=|B|, which implies |C|>=2|A|-|G|
     for A in itertools.chain.from_iterable(itertools.combinations(G,n) for n in range(3,len(G))):
         if not is_CFS(G.subgraph(A)) or (only_minCFS and not is_minimal_CFS(G)):
             continue
-        for C in itertools.chain.from_iterable(itertools.combinations(A,n) for n in range(2,len(A))):
+        for C in itertools.chain.from_iterable(itertools.combinations(A,n) for n in range(max(2,2*len(A)-len(G)),len(A))):
             if is_clique(G,C):
                 continue
             if non_cone and len(A)-len(C)==1:
@@ -366,7 +367,7 @@ def reductions(G):
     """
     Yield subgraphs of G with one vertex removed that are still CFS.
     """
-    for v in G:
+    for v in sorted([v for v in G], key=lambda v: len(G[v])):
         H=G.subgraph(set(G)-set([v,]))
         if is_CFS(H):
             yield H
@@ -436,54 +437,6 @@ def find_Dani_Levcovitz_subgraph(Gamma,verbose=False,assume_triangle_free=False,
             if Dani_Levcovitz(Gamma,Lambda): # check if Dani-Levcovitz conditions hold. 
                 return Lambda
     return None
-
-def old_find_Dani_Levcovitz_subgraph(Gamma,verbose=False):
-    """
-    Given a triangle-free CFS graph Gamma, find a subgraph Lambda of the complementary graph satisfying Dani-Levcovitz conditions. 
-    Return None if no such graph exists.
-    """
-    diagG=diagonal_graph(Gamma)
-    commutingGcomp=nx.Graph()
-    commutingGcomp.add_edges_from(v for v in diagG) # We do not need the entire complement graph of Gamma. Only edges that are the diagonal of an induced square have a chance to commute with another edge. Allowing other edges would just give isolated vertices of Delta.
-
-    # look at subgraphs of commutingGcomp with at most 2 components
-    for E in range(len(commutingGcomp.edges()),len(Gamma)//2-1,-1):
-        for edgeset in itertools.combinations(commutingGcomp.edges(),E):
-            Lambda=commutingGcomp.edge_subgraph(edgeset)
-            if Dani_Levcovitz(Gamma,Lambda): # check if Dani-Levcovitz conditions hold
-                return Lambda
-    return None
-
-
-def Theta_induced_rooted_complementary_subtrees(Gamma, commutingGcomp, current_tree, current_buds):
-    """
-    Generate subtrees of commutingGcomp containing current_tree such that no two vertices are connected by an edge of Gamma.
-    """
-    if not current_buds:
-       yield current_tree
-    else:
-        current_bud=min(current_buds)
-        if len(current_tree)==1:
-            outgoing_neighbors=set(commutingGcomp[current_bud])
-        else:
-            stem=next(iter(current_tree[current_bud]))
-            outgoing_neighbors=set(commutingGcomp[current_bud])-set([stem,])
-        for new_growth in itertools.chain.from_iterable(itertools.combinations(outgoing_neighbors,n) for n in range(len(outgoing_neighbors)+1)):
-            Theta=Dani_Levcovitz_Theta_graph(Gamma,current_tree)
-            if any(set(Theta[v]) & (set(new_growth) | set(current_tree)) for v in new_growth): #if  current_tree U newgrowth not Theta-induced
-                continue
-            new_tree=current_tree.copy()
-            for v in new_growth:
-                new_tree.add_edge(current_bud,v)
-            next_buds=(set(new_growth) | current_buds)-set([current_bud,])
-            for T in Theta_induced_rooted_complementary_subtrees(Gamma, commutingGcomp, new_tree, next_buds):
-                yield T
-        
-
-        
-        
-
-
 
 def Dani_Levcovitz_Theta_graph(Gamma,Lambda):
     Theta=nx.Graph()
@@ -965,7 +918,24 @@ def has_cycle_of_cylinders(G,T=None,**kwargs):
     return not nx.is_forest(cylinder_incidence_graph)
         
     
-    
+def has_ZZ_RAAG_obstruction(G,T=None,**kwargs):
+    """
+    A RACG that is Qi to a RAAG cannot have in its graph of cylinders a virtual Z^2 edge incident to a rigid vertex that is not virtually Z^2. 
+    """
+    if T is None:
+        T=graph_of_cylinders(G,kwargs)
+    if len(T)==1:
+        return False
+    for (v,w) in T.edges():
+        if v[0]=='C':
+            v,w=w,v
+        assert(v[0]=='R')
+        rigid_support=set(v[1:])
+        cylinder_support=set(w[1])|set(w[2])
+        if is_induced_square(G, rigid_support & cylinder_support): # this edge has virtual Z^2 stabilzer
+            if not rigid_support <= cylinder_support: # rigid stabilizer is strictly larger than incident edge, so not virtual Z^2
+                return True
+    return False
     
                                 
 # ----------more CFS stuff
@@ -1004,18 +974,20 @@ def get_minCFS_hierarchy(G):
     return list([])
 
 
-def get_iterated_construction(G,max_cone_size=float('inf'),only_minCFS=False,only_cones=False):
+def get_iterated_construction(G,max_cone_size=float('inf'),only_minCFS=False,only_cones=False,prefer_large_cones=False):
     """
     Return a rooted directed tree T whose source vertex is the graph G and such that at each vertex H there are the following possibiliies:
-    H is a square graph and T has no outgoing edges at H
-    There is a CFS subgraph H' = H - {v}, and T has a single outgoing edge at H going to H'
-    H splits as an amalgam of CFS subgraphs A and B, and T has 2 outgoing edges at H, going to A and B
+    H is a square graph and T has no outgoing edges at H.
+    There is a CFS subgraph H' = H - {v}, and T has a single outgoing edge at H going to H'.
+    H splits as an amalgam of CFS subgraphs A and B, and T has 2 outgoing edges at H, going to A and B.
 
     If only_cones=True only check for splittings as cone of a subgraph, not as amalgam.
+    If max_cone_size is given then only search for cones over subgraph of at most the given size. 
+    If prefer_large_cones=True search will first check highest valence vertices for cone splitting. 
 
     Return an empty tree if G is not CFS.
     """
-    # search prefers coning over amalgams, so if it is possible to build G via a sequence of cones offs then the resulting T will be a line where each edge is a cone off. 
+    # search prefers coning, so if it is possible to build G via a sequence of cones-offs without using any amalgams then the resulting T will be a line where each edge is a cone off. 
     T=nx.DiGraph()
     if is_induced_square(G,G):
         T.add_node(G)
@@ -1024,7 +996,7 @@ def get_iterated_construction(G,max_cone_size=float('inf'),only_minCFS=False,onl
         return T
     if only_minCFS and not is_minimal_CFS(G):
         return T
-    for v in G:
+    for v in sorted([v for v in G], key=lambda v: len(G[v]),reverse=prefer_large_cones): # check if G-{v} is CFS. If so, induct.
         if len(G[v])>max_cone_size:
             continue
         H=G.subgraph([w for w in G if w!=v])
@@ -1035,10 +1007,11 @@ def get_iterated_construction(G,max_cone_size=float('inf'),only_minCFS=False,onl
             T.add_edges_from(subtree.edges())
             T.add_edge(G,H)
             return T
-    if not only_cones:
+    if not only_cones: # at this point the graph is not a square and there is no vertex v for which G-{v} is CFS. Look for splitting of the graph as an amalgam of CFS subgraphs. 
         for A,B in distillations(G,only_minCFS=only_minCFS,non_cone=True):
             sgA=G.subgraph(A)
             sgB=G.subgraph(B)
+            # G is an amalgam of CFS graphs sgA and sgB over their intersection. Induct on each. 
             subtreeA=get_iterated_construction(sgA,max_cone_size,only_minCFS)
             subtreeB=get_iterated_construction(sgB,max_cone_size,only_minCFS)
             if subtreeA and subtreeB:
@@ -1088,13 +1061,13 @@ def support(C):
 #-------------- general graph structure
 def bipartition(G):
     """
-    Given a graph G, return two disjoint subset of vertices such that each set contains no adjacent vertices, and their union is all vertices of G. 
-    Raise an error if G is not bipartite.
+    Given a graph G, return a partition of its vertices into two sets such that neither set contains a pair of adjacent vertices. 
+    Raise a ValueError if G is not bipartite.
     """
     spheres=dict()
-    radius=0
     spheres[-1]=set([])
-    spheres[0]=set([min(C) for C in nx.connected_components(G)])
+    spheres[0]={next(iter(C)) for C in nx.connected_components(G)} # set containing one vertex from each connected component of G
+    radius=0
     while sum(len(spheres[r]) for r in spheres)<len(G):
         next_sphere=(set().union(*[set(G[v]) for v in spheres[radius]]))-(spheres[radius]|spheres[radius-1])
         if G.subgraph(next_sphere).edges():
@@ -1102,6 +1075,13 @@ def bipartition(G):
         radius+=1
         spheres[radius]=next_sphere
     return set().union(*[spheres[r] for r in spheres if not r%2]),set().union(*[spheres[r] for r in spheres if  r%2])
+
+def is_bipartite(G):
+    try:
+        bipartition(G)
+        return True
+    except ValueError:
+        return False
     
 
 
@@ -1229,6 +1209,9 @@ def is_clique(G,C):
     return 2*len(G.subgraph(C).edges())==len(C)*(len(C)-1)
 
 def is_induced_square(G,S):
+    """
+    Decide if S is the vertex set of an induced square of G.
+    """
     if len(set(S))!=4:
         return False
     inducedsubgraph=G.subgraph(S)
