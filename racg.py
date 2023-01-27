@@ -270,18 +270,41 @@ def get_square_completion(G,S):
         else:
             changed=False
     return G.subgraph(the_verts)
-            
-            
-        
+                
 
 def minsquare_subgraphs(G):
     """
     Generate the minsquare subgraphs of an nx.Graph G.
      minsquare = square complete, contains a square, and is minimal with respect to inclusion among such subgraphs. 
     """
-    SQ=square_graph(G)
-    for C in nx.connected_components(SQ):
-        yield G.subgraph(support(C))
+    D=diagonal_graph(G)
+    components=[tuple(sorted(C)) for C in nx.connected_components(D)]
+    component_completion=nx.DiGraph()
+    # component_completeion is a graph of components with an edge from A to B if the support of A contains a pair tha are a diagonal of a square appearing as a vertex of B
+    for C in components:
+        component_completion.add_node(C)
+    for C in components:
+        S=support(C)
+        for x,y in itertools.combinations(S,2):
+            if are_diagonal(G,x,y):
+                diag=tuple(sorted([x,y]))
+                for Cprime in components:
+                    if diag in Cprime:
+                        component_completion.add_edge(C,Cprime)
+                        break
+                else:
+                    raise ValueError("Coulnd't find "+str(diag))
+    for sink in minimal_sinks(component_completion):
+        yield G.subgraph(set.union(*[support(C) for C in sink]))
+    
+
+def minimal_sinks(G):
+    """
+    Given a directed graph, yield minimal subgraphs with no outoing edges. 
+    """
+    for C in nx.strongly_connected_components(G):
+        if all(w in C for v in C for w in G[v]):
+            yield C
 
 def is_minsquare(G,V=None):
     """
@@ -299,7 +322,7 @@ def is_CFS(G,precomputed_diagonal_graph=None):
     """
     True if G is a CFS graph, which means that, modulo deleting a join, the square graph of G contains a component with full support.
     """
-    Gprime=G.subgraph([v for v in G if G.degree[v]<len(G)])
+    Gprime=G.subgraph([v for v in G if G.degree[v]<len(G)-1])
     if precomputed_diagonal_graph is None:
         dg=diagonal_graph(Gprime)
     else:
@@ -332,7 +355,7 @@ def is_strongly_CFS(G):
     """
     Decide if the square graph of G is connected and has full support.
     """
-    Gprime=G.subgraph([v for v in G if G.degree[v]<len(G)])
+    Gprime=G.subgraph([v for v in G if G.degree[v]<len(G)-1])
     sg=square_graph(Gprime)
     if not sg:
         return not bool(Gprime)
@@ -377,15 +400,19 @@ def reductions(G):
 
 def Dani_Levcovitz(Gamma,Lambda,verbose=False):
     """
-    Given a triangle-free CFS graph Gamma and a subgraph Lambda of the complementary graph, check if Lambda defines a finite index RAAG system according to Dani-Levcovitz Theorem 4.8.
+    Given a triangle-free graph Gamma defining a one-ended RACG and a subgraph Lambda of the complementary graph, check if Lambda defines a finite index RAAG system according to Dani-Levcovitz Theorem 4.8.
     """
-    Gammaprime=Gamma.subgraph([v for v in Gamma if Gamma.degree[v]<len(Gamma)])
-    if not set(Lambda)==set(Gammaprime):
+    if not (is_triangle_free(Gamma) and is_one_ended(Gamma)):
+        NotImplemented
+    if len([x for x in nx.connected_components(Lambda)])!=2: # Dani-Lavcovitz Corollary 4.9: If W_Gamma is one-ended and 2-dimensional then Lambda only defines a finite index RAAG system if it has exactly 2 components. 
         if verbose:
-            print("Lambda does not have full support.")
+            print("Lambda has more than two components.")
+        return False
+    if not Dani_Levcovitz_F1(Gamma,Lambda,verbose):
         return False
     if not Dani_Levcovitz_RAAG_system(Gamma,Lambda,verbose):
         return False
+    # Dani-Levcovitz Remark 4.3: If Gamma is conected, Lambda has 2 components, and R2 and F1 are satisfied then F2 is also satisfied, so does not need to be checked separately.
     return  True 
 
 def draw_Dani_Levcovitz_pair(Gamma,Lambda,**kwargs):
@@ -453,7 +480,7 @@ def Dani_Levcovitz_RAAG_system(Gamma,Lambda, verbose=False):
     if len([x for x in nx.connected_components(Lambda)])>2:
         if verbose:
             print("Lambda has more than two components.")
-        return False
+        NotImplemented # Theorem 3.18 does not apply if Lambda has more than two components. 
     if not Dani_Levcovitz_R1(Gamma,Lambda,verbose):
         return False
     if not Dani_Levcovitz_R2(Gamma,Lambda,verbose):
@@ -514,6 +541,38 @@ def Dani_Levcovitz_R4(Gamma,Lambda,verbose=False):
                     if verbose:
                         print("Condition R4 fails. For 2 component cycle "+str(cycle)+",  edge"+str((cycle[k],cycle[(k+1)%len(cycle)]))+" is not contained in 2 component square.")
                     return False
+    return True
+
+def Dani_Levcovitz_F1(Gamma,Lambda,verbose=False):
+    Gammaprime=Gamma.subgraph([v for v in Gamma if Gamma.degree[v]<len(Gamma)])
+    if not set(Lambda)==set(Gammaprime):
+        if verbose:
+            print("Lambda does not have full support.")
+        return False
+    return True
+
+def Dani_Levcovitz_F2(Gamma,Lambda,verbose=False):
+    if has_cone_vertex(Gamma) or not is_triangle_free(Gamma):
+        NotImplemented
+    # for every pair of distinct components Lambda_1 Lambda_2 of Lambda and vertices v_1 in Lambda_1 and v_2 in Lambda_2, there is a Lambda_1-Lambda_2 path from v_1 to v_2
+    for A, B in itertools.combinations(nx.connected_components(Lambda),2):
+        reachable=nx.Graph()
+        reachable.add_nodes_from(A|B)
+        for a in A:
+            for b in set(Gamma[a])&B:
+                reachable.add_edge(a,b)
+        components=[C for C in nx.connected_components(reachable)]
+        if len(components)>1:
+            if verbose:
+                for i in range(len(components)):
+                    if len(components[i])==1:
+                        print(str(components[i])+" is isolated vertex for Lambda components "+str(A)+" and "+str(B)+".")
+                        break
+                else:
+                    a=next(iter(A&components[0]))
+                    b=next(iter(B&components[1]))
+                    print("No "+str(A)+"-"+str(B)+" path from "+str(a)+" to "+str(b)+".")
+            return False
     return True
             
 def two_component_cycles(Gamma,Lambda,n=None):
@@ -604,7 +663,7 @@ def Nguyen_Tran_condition(G):
     """
     If G is a triangle-free planar graph, decides whether or not W_G is quasiisometric to a RAAG.
     """
-    Gprime=G.subgraph([v for v in G if G.degree[v]<len(G)])
+    Gprime=G.subgraph([v for v in G if G.degree[v]<len(G)-1])
     if is_join(Gprime):
         return True
     T=Nguyen_Tran_tree(Gprime)
@@ -839,16 +898,17 @@ def Edletzberger_B_sets(G):
         B=newvertices.pop()
         for v in EV-set(B):
             superB=list(B)+[v,]
-            if Edletzberger_B1(G,superB,T):
-                superB.sort()
-                superB=tuple(superB)
-                if superB not in poset_of_B1_sets:
+            superB.sort()
+            superB=tuple(superB)
+            if superB not in poset_of_B1_sets:
+                if Edletzberger_B1(G,superB,T):            
                     poset_of_B1_sets.add_node(superB)
                     newvertices.add(superB)
-                    for C in poset_of_B1_sets:
+                    for C in [C for C in poset_of_B1_sets if len(C)+1==len(superB)]:
                         if set(C)<set(superB):
                             poset_of_B1_sets.add_edge(C,superB)
-                        elif set(superB)<set(C):
+                    for C in [C for C in poset_of_B1_sets if len(C)==1+len(superB)]:
+                        if set(superB)<set(C):
                             poset_of_B1_sets.add_edge(superB,B)
     # condition B2 is satisfied for the vertices of poset_of_B1_sets with no outgoing edges
     for B in (node for node, out_degree in poset_of_B1_sets.out_degree() if out_degree == 0):
@@ -1058,6 +1118,15 @@ def support(C):
     """
     return set().union(*[set(x) for x in C])
 
+
+def graph_from_diagonals(D):
+    G=nx.Graph()
+    for A,B in D.edges():
+        for i,j in itertools.combinations_with_replacement({0,1},2):
+            G.add_edge(A[i],B[j])
+    return G
+        
+
 #-------------- general graph structure
 def bipartition(G):
     """
@@ -1204,8 +1273,16 @@ def is_join(G):
             return True
     return False
 
+def is_cone_vertex(G,v):
+    return len(G[v])==len(G)-1
+
+def has_cone_vertex(G):
+    return not any(is_cone_vertex(G,v) for v in G)
 
 def is_clique(G,C):
+    """
+    Return True if C forms a clique in G, including if C is empty or singleton.
+    """
     return 2*len(G.subgraph(C).edges())==len(C)*(len(C)-1)
 
 def is_induced_square(G,S):
@@ -1233,9 +1310,21 @@ def is_square(G,S):
         return False
     return True
 
-        
+def are_diagonal(G,v,w):
+    """
+    Determine if v and w are a diagonal pair in an induced square of G.
+    """
+    if v in G[w]:
+        return False
+    common_neighbors=set(G[v])&set(G[w])
+    if is_clique(G,common_neighbors):
+        return False
+    return True
 
 def diagonal_pairs(G,S):
+    """
+    Return the diagonal pairs of an induced square.
+    """
     a,b,c,d=tuple(S)
     if a in G[b]:
         if a in G[c]:
@@ -1304,19 +1393,20 @@ def suspension(n):
         G.add_edge(1,i)
     return G
 
-def Pallavi(height,vertex=(0,0)):
+def Pallavi(height,width=3,vertex=(0,0)):
     G=nx.Graph()
     for level in range(1,1+height):
-        for i in range(3):
-            G.add_edge((i,level),(i,level-1))
-        G.add_edge((2,level),(0,level-1))
-    for level in range(0,1+height):
-        G.add_edge((0,level),(1,level))
-        G.add_edge((1,level),(2,level))
-    G.add_edge((2,height),vertex)
+        for i in range(width+1):
+            G.add_edge((i,level),(i,level-1)) #vertical edges
+        for i in range(2,width+1):
+            G.add_edge((i,level),(i-2,level-1)) #diagonal edges
+    for level in range(1+height):
+        for i in range(1,width+1):
+            G.add_edge((i,level),(i-1,level)) #horizontal edges
+    G.add_edge((width,height),vertex)
     return G
         
-def nested_suspension(n):
+def nested_suspension(n): #isomorphic to Davis_Januskiewicz(nx.path_graph(n+1))
     G=nx.Graph()
     for i in range(1,1+n):
         if i%2:
@@ -1333,6 +1423,31 @@ def nested_suspension(n):
         G.add_edge(oldb,newa)
         G.add_edge(olda,newb)
         G.add_edge(oldb,newb)
+    return G
+
+
+def tree(valence,radius):
+    G=nx.Graph()
+    G.add_node(0)
+    rad=0
+    current_node=0
+    spheres=dict()
+    spheres[0]=set([0,])
+    if radius>0:
+        spheres[1]=set()
+        for i in range(valence):
+            current_node+=1
+            G.add_edge(0,current_node)
+            spheres[1].add(current_node)
+    rad=1
+    while rad<radius:
+        rad+=1
+        spheres[rad]=set()
+        for v in spheres[rad-1]:
+            for i in range(valence-1):
+                current_node+=1
+                G.add_edge(v,current_node)
+                spheres[rad].add(current_node)
     return G
           
 def powerset(iterable,minsize=0,maxsize=float('inf')):
@@ -1379,4 +1494,57 @@ def thenonconstructablemincfsexample(): # This is a triangle-free, minimal CFS g
     G.add_edge('b','z')
     G.add_edge('b','y1')
     G.add_edge('b','w1')
+    return G
+
+def Genevois_minsquare_nonCFS_example():
+    # genevois 19 QI rigid subgroups in RACG, Example 7.3(a)
+    G=nx.Graph()
+    G.add_edge(0,1)
+    G.add_edge(0,3)
+    G.add_edge(0,4)
+    G.add_edge(0,5)
+    G.add_edge(1,2)
+    G.add_edge(1,6)
+    G.add_edge(2,3)
+    G.add_edge(2,4)
+    G.add_edge(2,5)
+    G.add_edge(3,10)
+    G.add_edge(4,6)
+    G.add_edge(4,8)
+    G.add_edge(5,8)
+    G.add_edge(5,10)
+    G.add_edge(6,7)
+    G.add_edge(6,11)
+    G.add_edge(7,8)
+    G.add_edge(7,9)
+    G.add_edge(7,12)
+    G.add_edge(8,9)
+    G.add_edge(8,11)
+    G.add_edge(8,12)
+    G.add_edge(9,10)
+    G.add_edge(9,11)
+    G.add_edge(10,12)
+    G.add_edge(11,12)
+    return G
+    
+    
+def minsquarebutnotcfsexample():
+    G=nx.Graph()
+    G.add_edge(0,1)
+    G.add_edge(0,2)
+    G.add_edge(0,3)
+    G.add_edge(1,4)
+    G.add_edge(1,5)
+    G.add_edge(2,4)
+    G.add_edge(2,5)
+    G.add_edge(3,4)
+    G.add_edge(3,7)
+    G.add_edge(3,8)
+    G.add_edge(4,6)
+    G.add_edge(5,6)
+    G.add_edge(5,9)
+    G.add_edge(6,7)
+    G.add_edge(6,8)
+    G.add_edge(7,9)
+    G.add_edge(8,9)
     return G
