@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import Colormap
 import copy
 import netgraph
-
+import cmath
 
 """ 
 import pickle
@@ -23,6 +23,7 @@ def draw(G,H=None,K=None,**kwargs):
     If both H and K are given then their common edges are purple.  
     Other kwargs passed to netgraph.
     """
+    # To specify placement of vertices, use node_layout=pos, where pos is a dict with keys the vertices and values the coordinates of each vertex. Note that some examples on the web show that the netgraph argument to use here is node_layout=pos, but that does not work in the latest version of netgraph.
     edge_color=dict()
     if H is None and K is None:
         for e in G.edges():
@@ -431,6 +432,24 @@ def draw_Dani_Levcovitz_pair(Gamma,Lambda,**kwargs):
     plt.show(block=False)
     return plot_instance
 
+def draw_Dani_Levcovitz_in_diagonal(Gamma,Lambda):
+    plot_instance=draw(diagonal_graph(Gamma),Dani_Levcovitz_Delta(Gamma,Lambda))
+    return plot_instance
+
+def Dani_Levcovitz_Delta(Gamma,Lambda):
+    Delta=nx.Graph()
+    for (a,b) in Lambda.edges():
+        if b<a:
+            a,b=b,a
+        Delta.add_node((a,b))
+    for ((a,b),(c,d)) in itertools.combinations(Lambda.edges(),2):
+        if b<a:
+            a,b=b,a
+        if d<c:
+            c,d=d,c
+        if is_induced_square(Gamma,{a,b,c,d}):
+            Delta.add_edge((a,b),(c,d))
+    return Delta
 
 def find_Dani_Levcovitz_subgraph(Gamma,verbose=False,assume_triangle_free=False,assume_CFS=False):
     """
@@ -996,6 +1015,36 @@ def has_ZZ_RAAG_obstruction(G,T=None,**kwargs):
             if not rigid_support <= cylinder_support: # rigid stabilizer is strictly larger than incident edge, so not virtual Z^2
                 return True
     return False
+
+def is_RAAGedy(G,verbose=False):
+    if nx.is_planar(G):
+        if verbose:
+            print("Graph is planar. Nguyen-Tran condition applies.")
+        return Nguyen_Tran_condition(G)
+    if verbose:
+        print("Graph is nonplanar.")
+    T=graph_of_cylinders(G)
+    if has_ZZ_RAAG_obstruction(G,T):
+        if verbose:
+            print("Graph of cylinders has a virtually ZxZ rigid vertex whose incident edges are not virtually ZxZ.")
+        return False
+    if has_cycle_of_cylinders(G,T):
+        if verbose:
+            print("Graph has a cycle of cut pairs.")
+        return False
+    if not is_bipartite(G):
+        if verbose:
+            print("Graph is not bipartite.")
+        return None
+    Lambda=find_Dani_Levcovitz_subgraph(G)
+    if Lambda is not None:
+        if verbose:
+            print("Found Dani-Levcovitz graph.")
+        return True
+    else:
+        if verbose:
+            print("No Dani-Levcovitz graph.")
+        return None
     
                                 
 # ----------more CFS stuff
@@ -1047,7 +1096,8 @@ def get_iterated_construction(G,max_cone_size=float('inf'),only_minCFS=False,onl
 
     Return an empty tree if G is not CFS.
     """
-    # search prefers coning, so if it is possible to build G via a sequence of cones-offs without using any amalgams then the resulting T will be a line where each edge is a cone off. 
+    # search prefers coning, so if it is possible to build G via a sequence of cones-offs without using any amalgams then the resulting T will be a line where each edge is a cone off.
+    # CFS graphs can always be built only by coning. The amalgam parts of this algorithm should never be needed.
     T=nx.DiGraph()
     if is_induced_square(G,G):
         T.add_node(G)
@@ -1081,6 +1131,20 @@ def get_iterated_construction(G,max_cone_size=float('inf'),only_minCFS=False,onl
                 T.add_edge(G,sgB)
                 return T
     return T
+
+def get_cone_sequence(G,prefer_large_cones=True):
+    """
+    Given a CFS graph G, return a set of four vertices forming an initial square and a sequence of vertices added as cone-offs to build G.
+    """
+    T=get_iterated_construction(G,prefer_large_cones=prefer_large_cones)
+    cone_sequence=[]
+    H=next(iter({K for K in T if len(K)==len(G)}))
+    while len(H)>4:
+        nextH=next(T.successors(H))
+        cone_sequence.append((set(H)-set(nextH)).pop())
+        H=nextH
+    cone_sequence.reverse()
+    return set(H),cone_sequence
 
 
 def square_graph(G):
@@ -1548,3 +1612,18 @@ def minsquarebutnotcfsexample():
     G.add_edge(7,9)
     G.add_edge(8,9)
     return G
+
+
+
+def graph2tikz(netgraph_plot_instance):
+    tikzoutputstring='\\begin{tikzpicture}\\tiny\n'
+    for i in range(len(netgraph_plot_instance.nodes)):
+        thisnodepos=netgraph_plot_instance.node_positions[netgraph_plot_instance.nodes[i]][0]-.5+(netgraph_plot_instance.node_positions[netgraph_plot_instance.nodes[i]][1]-.5)*1j
+        thisnodeangle=180.0*cmath.phase(thisnodepos)/cmath.pi
+        tikzoutputstring+='\coordinate[label={[label distance=-1pt] '+"{:.2f}".format(thisnodeangle)+':$'+str(netgraph_plot_instance.nodes[i])+'$}] ('+str(i)+') at ('+"{:.2f}".format(thisnodepos.real)+','+"{:.2f}".format(thisnodepos.imag)+');\n'
+    for initial,final in netgraph_plot_instance.edges:
+        tikzoutputstring+='\draw ('+str(netgraph_plot_instance.nodes.index(initial))+')--('+str(netgraph_plot_instance.nodes.index(final))+');\n'
+    for i in range(len(netgraph_plot_instance.nodes)):
+        tikzoutputstring+='\\filldraw ('+str(i)+') circle (.5pt);\n'
+    tikzoutputstring+= '\end{tikzpicture}'
+    print(tikzoutputstring)
