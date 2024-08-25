@@ -6,7 +6,7 @@ from matplotlib.colors import Colormap
 import copy
 import netgraph # This is used by the drawing functions draw, draw_Dani_Levcovitz_pair, draw_Dani_Levcovitz_in_diagonal to draw interactive graphs, in which vertices can be repositioned and vertices and edges can be added or removed. Can be commented out if you don't want to draw graphs, or will draw them using some other graph drawing package. 
 import cmath # This is only used in graph2tikz to export graph to tikz format for inclusion into latex. 
-
+import pandas as pd
 """ 
 import pickle
 with open('CFS_graphs_up_to_11.pkl','rb') as myfile:
@@ -157,7 +157,7 @@ def get_good_cycle(G,legalturns=None,precomputeddiagonals=None,forbidden=set()):
 
 def find_good_cycle_in_iterated_double(G,maxdoublingdepth,verbose=False,return_depth_only=False):
     """
-    Recursive bredth first search for good cycles in iterated doubles of G over vertices, iterated at most maxdoublingdepth times. 
+    Recursive breadth first search for good cycles in iterated doubles of G over vertices, iterated at most maxdoublingdepth times. 
 
     If return_depth_only=True then return the first depth at which a good cycle is found, or return -1 if none are found up to maxdoublingdepth.
     """
@@ -730,6 +730,8 @@ def satellite_dismantling_sequences(G,assume_strong_CFS=False,assume_one_ended=F
 def is_suitable_satellite_dismantling_sequence(G,satellite_list,required_Lambda_edges=[]):
     n=len(satellite_list)
     assert(len(G)==n+4)
+    if len(G)==4 and len(satellite_list)==0:
+        return True
     if any(tuple(edge) in G.edges() for edge in required_Lambda_edges):
         return False
     Gamma=[G.subgraph(set(G)-set(satellite_list[:i])) for i in range(n,-1,-1)]
@@ -780,10 +782,15 @@ def exists_DL_relative_to_GOC(G,GOC):
         if relativesss is None:
             return False
     return True
+
+def exists_DL(G):
+    if is_square(G,set(G)):
+        return True
+    sss=find_suitable_satellite_dismantling_sequence(G)
+    return not (sss is None)
                                                                     
     
-        
-        
+    
         
         
         
@@ -795,40 +802,9 @@ def exists_DL_relative_to_GOC(G,GOC):
 
 #--------- Nguyen-Tran 
 
-def maximal_suspension_subgraphs(G):
-    """
-    Generator that yields maximal suspension subsets of a graph G as tuples ((a,b),(c_1,c_2,....)) such that a and b are the suspension vertices and c_1,c_2,.... are the common neighbors of a and b in G. 
-    """
-    ordered_nodes=[v for v in G]
-    for i in range(len(ordered_nodes)-1):
-        for j in (j for j in range(i+1,len(ordered_nodes)) if ordered_nodes[j] not in G[ordered_nodes[i]]):
-            a=ordered_nodes[i]
-            b=ordered_nodes[j]
-            common_neighbors=set(G[a])&set(G[b])
-            if len(common_neighbors)<2:
-                pass # a and b are not suspension points of a subgraph
-            elif len(common_neighbors)>2:
-                yield ((a,b),tuple(common_neighbors))
-            else:
-                c,d=common_neighbors
-                assert(c not in G[d]) # G is triangle-free
-                k=ordered_nodes.index(c)
-                ell=ordered_nodes.index(d)
-                if k>ell:
-                    k,ell=ell,k
-                    c,d=d,c
-                if len(set(G[c])&set(G[d]))==2:
-                    if i<k:
-                        yield ((a,b),(c,d))
-                    else:
-                        pass # The square a,c,b,d is a max suspension subgraph, but we already yielded it because c comes before a in the ordered_nodes list. 
-                else:
-                    pass # The maximal suspension subgraph for which a,b are suspension points is contained in a larger suspension subgraph for which c,d are the suspension points. 
-            
-
 def Nguyen_Tran_tree(G):
     T=nx.Graph()
-    for ms in maximal_suspension_subgraphs(G):
+    for ms in maximal_one_ended_suspension_subgraphs(G):
         T.add_node(ms)
     for v,w in itertools.combinations(T,2):
         if is_induced_square(G,{v[0][0],w[0][0],v[0][1],w[0][1]}):
@@ -1120,10 +1096,10 @@ def graph_of_cylinders(G,subdivided_K4s_of_G=None,assume_triangle_free=False,ass
     """
     if not assume_one_ended:
         if not is_one_ended(G):
-            raise InputError("Input graph must be triangle-free, planar, without separating cliques.")
+            raise InputError("Input graph must be triangle-free and without separating cliques.")
     if not assume_triangle_free:
         if not is_triangle_free(G):
-            raise InputError("Input graph must be triangle-free, planar, without separating cliques.")
+            raise InputError("Input graph must be triangle-free and without separating cliques.")
     if subdivided_K4s_of_G is None:
         K4s=[x for x in subdivided_K4s(G)]
     else:
@@ -1251,40 +1227,168 @@ def get_cycle_of_suspension_poles(G):
     else:
         return None
 
-#--------------------   Camp-Mihalik
-def Camp_Mihalik_locally_connected_boundary(G,assume_one_ended=False,assume_three_dimensional=False):
+#-------------------- Fioravanti-Karrer
+def Fioravanti_Karrer_condition(G,assume_triangle_free=False,assume_one_ended=False,GOC=None,verbose=False):
     """
-    Check Camp-Mihalik conditions to see if W_G has locally connected boundary.
+    Recursively find splittings of triangle-free graph G over either a clique or a subgraph of a thick join, until remaining pices are joins. Return value True means this process was sucessful and the RACG W_G has totally disconnected Morse boundary. Return value False means at some point no suitable splitting could be found. In this case the result is inconclusive about connectivity of the Morse boundary. 
+    """
+    if not assume_triangle_free and not is_triangle_free(G):
+        raise InputError("Only implemented for triangle-free graphs.")
+    if is_clique(G,G):# Morse boundary is empty
+        if verbose:
+            print("Graph "+str(G.nodes())+" is a clique.")
+        return True
+    if is_join(G):# defining graph is a join, so group is either finite, virtualy free, or thick join
+        if has_cone_vertex(G):
+            if verbose:
+                print("Graph "+str(G.nodes())+" is cone on anticlique.")
+        else:
+            if verbose:
+                print("Graph "+str(G.nodes())+" is thick join.")
+        return True
+    if not assume_one_ended:
+        gsd=GSD(G,assume_triangle_free=True) # Grushko-Stallings-Dunwoody decomposition
+        if len(gsd)>1: # exists spltting over finite subgroup, pass to vertex groups
+            if verbose:
+                print("Graph "+str(G.nodes())+" splits over a finite subgroup.")
+                for v in gsd:
+                    if Fioravanti_Karrer_condition(G.subgraph(v),assume_triangle_free=True,verbose=True) is False:
+                        print("GSD factor "+str(v)+" of graph "+str(G.nodes())+" fails.")
+                        return False
+                return True
+            else:
+                return all(Fioravanti_Karrer_condition(G.subgraph(v),assume_triangle_free=True) for v in gsd) #pass to vertex groups, which are either finite or one-ended
+    # one ended
+    if is_surface_type(G):
+        if verbose:
+            print("Graph "+str(G.nodes())+" is surface type.")
+        return False
+    if GOC is None:
+        pass
+    else:
+        goc=GOC
+        if len(goc)>1 and all(len(v[2])>=2 for v in goc if v[0]=='C'):# pass to rigid vertices, since Morse boundaries of one-ended cylinders and hanging subgroups are empty/totally disconnected, respectively
+            if verbose:
+                print("Nontrivial JSJ decomposition with thick cylinders.")
+                for rigid in (v for v in goc if v[0]=="R"):
+                    print("Passing to rigid vertex "+str(rigid)+" of graph "+str(G.nodes())+".")
+                    if Fioravanti_Karrer_condition(G.subgraph(rigid[1:]),assume_triangle_free=True,verbose=True) is False:
+                        print("Rigid vertex "+str(rigid)+" of graph "+str(G.nodes())+" fails.")
+                        return False
+                return True
+            else:
+                return all(Fioravanti_Karrer_condition(G.subgraph(r[1:]),assume_triangle_free=True) for r in goc if r[0]=='R')
+    if verbose:
+        print("Looking for disconnecting sub-joins.")
+    for A,B in maximal_thick_joins(G):
+        for P in powerset(A|B):
+            connected_components=[C for C in nx.connected_components(G.subgraph(set(G)-set(P)))]
+            if len(connected_components)>1:
+                if verbose:
+                    print("Subset "+str(set(P))+" of thick join "+str(set(A))+"*"+str(set(B))+" separates the graph "+str(G.nodes())+".")
+                    for component in connected_components:
+                        if Fioravanti_Karrer_condition(G.subgraph(component|set(P)), assume_triangle_free=True,verbose=True) is False:
+                            print("Component "+str(component)+" of graph "+str(G.nodes())+" fails.")
+                            return False
+                    return True
+                else:
+                    return all(Fioravanti_Karrer_condition(G.subgraph(C|set(P))) for C in connected_components)
+    if verbose:
+        print("Did not find any suitable decompositions of graph "+str(G.nodes())+".")
+    return False
+            
+    
+
+        
+
+def GSD(G,assume_triangle_free=False):
+    """
+    Find the Grushko-Stallings-Dunwoody decomposition of a RACG defined by triangle-free graph G.
+    Return type is nx.Graph() whose vertices are frozensets of vertices of G, such that subgraph induced by such a set is either spherical or not separated by a clique. Edge between two vertices when there is inclusion of their corresponding sets. 
+    """
+    if not assume_triangle_free and not is_triangle_free(G):
+        raise InputError("Only implemented for triangle-free graphs.")
+    gsd=nx.Graph()
+    for v in zero_one_ended_components(G):
+        gsd.add_node(frozenset(v))
+    for v, w in itertools.permutations(gsd,2):
+        if v<=w:
+            gsd.add_edge(v,w)
+    # it can happen that there are extraneous triangles coming from chaining inclusion of cut vertex into cut edge into rigid subgraph. In this case remove the vertex-rigid edge.
+    for u, v, w in triangles(gsd):
+        if u < v:
+            if v<w:
+                pass
+            elif w<u:
+                u,v,w=w,u,v
+            else:
+                u,v,w=u,w,v
+        else:
+            if w < v:
+                u,v,w=w,v,u
+            elif w<u:
+                u,v,w=v,w,u
+            else:
+                u,v,w=v,u,w
+        gsd.remove_edge(u,w)
+    return gsd
+        
+def zero_one_ended_components(G):
+    """
+    Generator of subsets of vertices of G that are either a separating vertex or edge or cannot be disconnected by a vertex or edge. 
+    """
+    cliques_by_size=[set([]),]+[set([v,]) for v in G]+[{v,w} for v,w in G.edges()]
+    for clique in cliques_by_size:
+        complementary_components=[C for C in nx.connected_components(G.subgraph(set(G)-clique))]
+        if len(complementary_components)>1:
+            if clique:
+                yield frozenset(clique)
+            for C in complementary_components:
+                for O in zero_one_ended_components(G.subgraph(C|clique)):
+                    yield O
+            break
+    else:
+        yield set(G)
+        
+                    
+            
+#--------------------   Camp-Mihalik
+def has_locally_connected_boundary(G,assume_one_ended=False,assume_two_dimensional=False):
+    """
+    Check Camp-Mihalik conditions to see if W_G has locally connected visual boundary.
 
     >>> G=nx.Graph(); G.add_edges_from([(0,2),(0,3),(1,2),(1,3)]);
-    >>> Camp_Mihalik_locally_connected_boundary(G)
+    >>> has_locally_connected_boundary(G)
     True
     >>> G.add_edges_from([(0,4),(1,4)]);
-    >>> Camp_Mihalik_locally_connected_boundary(G)
+    >>> has_locally_connected_boundary(G)
     False
     >>> G=double(cycle_graph(5));
-    >>> Camp_Mihalik_locally_connected_boundary(G)
+    >>> has_locally_connected_boundary(G)
     False
     >>> G.add_edges_from([((0,0),(5,0)),((0,1),(5,0)),((1,0),(5,0)),((4,1),(5,0)),((1,0),(6,0)),((1,1),(6,0)),((2,0),(6,0)),((0,1),(6,0)),((2,0),(7,0)),((2,1),(7,0)),((3,0),(7,0)),((1,1),(7,0)),((3,0),(8,0)),((3,1),(8,0)),((4,0),(8,0)),((2,1),(8,0)),((4,0),(9,0)),((4,1),(9,0)),((0,0),(9,0)),((3,1),(9,0))]);
-    >>> Camp_Mihalik_locally_connected_boundary(G)
+    >>> has_locally_connected_boundary(G)
     True
-
     """
-    if not assume_three_dimensional:
+    if not assume_two_dimensional:
         for a,b,c,d in induced_squares(G):
             if not is_clique(G,link(G,a)&link(G,b)&link(G,c)&link(G,d)):
                 raise InputError("Graph has an octohedron; Camp-Mihalik does not apply.")
     if not assume_one_ended and not is_one_ended(G):
-        raise InputError("Graph has a separating clique; Camp-Mihalik does not apply.")
+        raise InputError("Graph does not give one-ended group; Camp-Mihalik does not apply.")
+    # Step 1, check if G is suspension
     orderednodes=[v for v in G]
     for i in range(len(orderednodes)-1):
         for j in range(i+1,len(orderednodes)):
+            if orderednodes[j] in G[orderednodes[i]]:
+                continue
             commonneighbors=link(G,orderednodes[i])&link(G,orderednodes[j])
             if len(commonneighbors)==len(G)-2:
                 if is_infinite_ended(G.subgraph(commonneighbors)):
                     return False
                 else:
                     return True
+    # Step 2, search for virtual factor separator
     vfs=find_virtual_factor_separator(G)
     if vfs is None:
         return True
@@ -1302,11 +1406,9 @@ def find_virtual_factor_separator(G):
             commonneighbors=link(G,s)&link(G,t)
             if not commonneighbors:
                 continue
-            for D in powerset(commonneighbors):
-                if not D:
-                    continue
-                for Cprime in powerset(set.intersection(*[link(G,d) for d in D])):
-                    if is_clique(G,Cprime) and not {s,t}<=set(Cprime):
+            for D in powerset(commonneighbors,minsize=1):
+                for Cprime in powerset(set.intersection(*[link(G,d) for d in D])): # Cprime=C-D
+                    if not {s,t}<=set(Cprime) and is_clique(G,Cprime):
                         C=set(Cprime)|set(D)
                         if not nx.is_connected(G.subgraph(set(G)-C)):
                             return C,D,s,t
@@ -1352,7 +1454,7 @@ def maximal_joins_containing_vertex(G,v):
     Generate maximal  join subgraphs of G containing vertex v. Yield set of two frozensets that are the two parts of vertices of a maximal complete bipartite subgraph of G containing v.
     """
     L=link(G,v)
-    for S in (set(P) for P in powerset(L,minsize=1)):
+    for S in (set(P) for P in powerset(L,minsize=1,small_first=False)):
         T=set.intersection(*[link(G,s) for s in S])
         if not any(T<=link(G,w) for w in L-S):
             yield frozenset({frozenset(S),frozenset(T)})
@@ -1399,9 +1501,15 @@ def MPRG_fundamental_domain(G):
     return F
 
 def MPRG_stab(F,v):
+    """
+    Return the set of vertices of the defining graph that make up the maximal thick join corresponding to vertex v of the fundamental domain F of the MPRG.
+    """
     assert(v in F)
     A,B=v
-    return A|B
+    return set(A)|set(B)
+
+def MPRG_support(F,Fset):
+    return set.union(*[MPRG_stab(F,v) for v in Fset])
 
 def MPRG_fixed(F,s):
     """
@@ -1409,25 +1517,294 @@ def MPRG_fixed(F,s):
     """
     return {J for J in F if s in MPRG_stab(F,J)}
 
-def find_MPRG_ladder(G):
+def edges_not_in_any_thick_join(G,precomputed_MPRG_fundamtenal_domain=None):
+    """
+    Generators that yields edges of G that are not contained in any thick join subgraph.
+    """
+    if precomputed_MPRG_fundamtenal_domain is None:
+        F=MPRG_fundamental_domain(G)
+    else:
+        F=precomputed_MPRG_fundamtenal_domain
+    vertex_supports=[MPRG_support(F,[v,]) for v in F]
+    for a,b in G.edges():
+        if not any(a in S and b in S for S in vertex_supports):
+            yield a,b
+    
+
+
+def find_MPRG_ladder(G,rs=None,verbose=False,small_first=False, try_hard=False):
+    if is_join(G):
+        return None
     F=MPRG_fundamental_domain(G)
-    for s,t in G.edges():
-        S=MPRG_fixed(F,s)
-        T=MPRG_fixed(F,t)
-        if S&T:
+    if len(F)<5 or nx.is_tree(F):
+        return None
+    components=[C for C in nx.connected_components(F)]
+    if rs is not None:
+        orderedvertices=[v for v in rs]+[v for v in set(G)-set(rs)]
+        indicestocheck=[x for x in range(min([len(rs),len(G)-1]))]
+    else:
+        orderedvertices=[v for v in G]
+        indicestocheck=[i for i in range(len(G)-1)]
+    for i in indicestocheck:
+        r=orderedvertices[i]
+        Rfix=MPRG_fixed(F,r)
+        Ractivecomponents=[C for C in components if C&Rfix]
+        if len(Ractivecomponents)>1:
             continue
-        for a,b in itertools.product(S,T):
-            for P in nx.all_simple_paths(F.subgraph((set(F)-(S-{a}))-(T-{b})),a,b):
-                if any((P[i],P[j]) in F.edges() for i in range(len(P)-2) for j in range(i+2,len(P))):
+        Ractivecomponent=Ractivecomponents[0]
+        if not diameter_at_least_three(F,Rfix):
+            continue
+        for j in range(i+1,len(orderedvertices)):
+            s=orderedvertices[j]
+            if r in G[s]:
+               continue
+            Sfix=MPRG_fixed(F,s)
+            if Sfix&Rfix: # if r and s are contained in a common join
+                continue
+            if not Sfix<=Ractivecomponent:
+                continue
+            if not diameter_at_least_three(F,Sfix):
+                continue
+            if verbose:
+                print("Trying r="+str(r)+" and s="+str(s))
+            if try_hard:
+                Rs_to_try=powerset(Rfix,minsize=2,small_first=small_first)
+            else:
+                Rs_to_try=[Rfix,]
+            for R in Rs_to_try:
+                R=set(R)
+                if not diameter_at_least_three(F,R):
                     continue
-                if any(len(link(F,w)&set(P))>1 for w in set(F)-set(P)):
+                if badly_star_separated(F,R):
                     continue
-                for r in frozenset.union(*[MPRG_stab(F,J) for J in P])-{s,t}:
-                    indices_fixed={i for i in range(len(P)) if r in MPRG_stab(F,P[i])}
-                    if max(indices_fixed)-min(indices_fixed)>=3 or ((r,s) in G.edges() and max(indices_fixed)>=2) or ((r,t) in G.edges() and len(P)-1-min(indices_fixed)>=2):
-                        return r,s,t,P
+                if try_hard:
+                    Ss_to_try=powerset(Sfix,minsize=2,small_first=small_first)
+                else:
+                    Ss_to_try=[Sfix,]
+                for S in Ss_to_try:
+                    S=set(S)
+                    if not diameter_at_least_three(F,S):
+                        continue
+                    if badly_star_separated(F,S):
+                        continue
+                    if verbose:
+                        print("Trying fixed sets "+str(R)+" and "+str(S))
+                    Delta=find_Delta_for_MPRG_ladder_subtractive(F,r,s,R,S,(Rfix-R)|(Sfix-S)|(set(F)-Ractivecomponent),verbose=(verbose==2))
+                    if Delta is not None:
+                        return r,s,Delta
     return None
     
+def badly_star_separated(F,R,verbose=False):
+    for v in F:
+        possiblestars=[star(F,v),]
+        for S in powerset(star(F,v)-set([v,]),minsize=1,small_first=False):
+            S=set(S)
+            if set.intersection(*[MPRG_support(F,[s,]) for s in S])-MPRG_support(F,[v,]):
+                possiblestars.append(S)
+        for S in possiblestars:
+            components=nx.connected_components(F.subgraph(set(F)-S))
+            Rcomponents=[set(C)&set(R) for C in components if set(C)&set(R)]
+            assert(Rcomponents)# should have only used this function if diam(R)>=3
+            if len(Rcomponents)==1:
+                continue
+            singletonRcomponents=[set(C) for C in Rcomponents if len(C)==1]
+            if len(Rcomponents)-len(singletonRcomponents)>1:
+                if verbose:
+                    print("R set "+str(R)+" is separated into multiple nonsingleton components by subset "+str(S)+" of star of "+str(v)+".")
+                return True
+            if len(singletonRcomponents)>1 and diameter_at_least_three(F,set.union(*singletonRcomponents)):
+                if verbose:
+                    print("R set "+str(R)+" has widely separated singleton complementary components of subset "+str(S)+" of star of "+str(v)+".")
+                return True
+    return False
+        
+    
+
+def diameter_at_least_three(thegraph,input_vertex_set):
+    """
+    Return True if input_vertex_set has diameter at least three in thegraph.
+    Error if input_vertex_set is not contained in a single component of thegraph. 
+    """
+    for v,w in itertools.combinations(input_vertex_set,2):
+        if nx.shortest_path_length(thegraph,v,w)>=3:
+            return True
+    return False
+
+    
+def find_Delta_for_MPRG_ladder_subtractive(F,r,s,R,S,excluded,currentDelta=None,verbose=False):
+    """
+    Find a connected subgraph Delta of fundamental domain F of an MPRG such that the support of r in Delta is R, the support of s in Delta is S, such that Delta does not contain any vertices given by excluded, such that Delta minus the star of any vertex has exactly one non-singleton component, and such that the complement of the big component has diameter at most 2.
+
+    Start with F-excluded. If all vertices of R and S are contained in one component, pass to that component, else fail. Then iterate through vertices v in F and remove its star. If there is only one nonsingleton component containing vertices of R and S then throw away any other nonsingleton components, else fail. If there are singleton components that are not in R or S and make the diameter of the complement of the big component at least 3 then throw them away too. 
+    """
+    if currentDelta is None:
+        Delta=F.subgraph(set(F)-excluded) # largest subgraph whose intersection with Rfix is R and intersection with Sfix is S
+    else:
+        Delta=currentDelta
+    components=[C for C in nx.connected_components(Delta)]
+    if len(components)>1:
+        activeindex=[i for i in range(len(components)) if (R|S)&components[i]]
+        if len(activeindex)!=1:
+            if verbose:
+                print("R and S do not lie in a connected subset of F-excluded.")
+            return None
+        else:
+            Delta=Delta.subgraph(components[activeindex[0]])
+    modified=True
+    while modified:
+        modified=False
+        possiblevertexstars=[]
+        for v in F:
+            possiblevertexstars.append((v,star(F,v)))
+            for partialstar in powerset(star(F,v)-set([v,]),minsize=1,small_first=False):
+                partialstar=set(partialstar)
+                if set.intersection(*[MPRG_support(F,[x,]) for x in partialstar])-MPRG_support(F,[v,]):
+                    possiblevertexstars.append((v,partialstar))
+        for v,partialstar in possiblevertexstars:
+            if verbose:
+                print("Delta has size "+str(len(Delta))+". Checking intersection with star of "+str(v))
+            dead=[]
+            live=[]
+            deadsingle=[]
+            livesingle=[]
+            for C in nx.connected_components(Delta.subgraph(set(Delta)-partialstar)):
+                if len(C)==1:
+                    if C&(R|S):
+                        livesingle.append(C)
+                    else:
+                        deadsingle.append(C)
+                elif C&(R|S):
+                    live.append(C)
+                else:
+                    dead.append(C)
+            if len(live)!=1:
+                if verbose:
+                    print("More than one live complementary component of star.")
+                return None
+            bigcomponent=live[0]
+            if not ((bigcomponent&S) and (bigcomponent&R)):
+                if verbose:
+                    print("Big component misses one of the fixed sets.")
+                return None
+            if dead:
+                Delta=Delta.subgraph(set(Delta)-set.union(*dead))
+                modified=True
+                components=[C for C in nx.connected_components(Delta)]
+                if len(components)>1:
+                    activeindex=[i for i in range(len(components)) if (R|S)&components[i]]
+                    if len(activeindex)!=1:
+                        if verbose:
+                            print("Dead component disconnects.")
+                        return None
+                    else:
+                        Delta=Delta.subgraph(components[activeindex[0]])
+            deadleaves=[v for v in Delta if len(Delta[v])==1 and v not in R|S]
+            while deadleaves:
+                Delta=Delta.subgraph(set(Delta)-set(deadleaves))
+                modified=True
+                deadleaves=[v for v in Delta if len(Delta[v])==1 and v not in R|S]
+            if diameter_at_least_three(Delta,set(Delta)-bigcomponent):
+                if deadsingle:
+                    optionalvertices=[next(iter(C)) for C in deadsingle]
+                    for P in powerset(optionalvertices,minsize=1,small_first=False): # don't know which of these its ok to throw away
+                        newDelta=Delta.subgraph(set(Delta)-set(P))
+                        if diameter_at_least_three(Delta,set(newDelta)-bigcomponent):
+                            continue
+                        else:
+                            recursionresult=find_Delta_for_MPRG_ladder_subtractive(F,r,s,R,S,excluded|set(P),currentDelta=newDelta)
+                            if recursionresult is not None:
+                                return recursionresult
+                if verbose:
+                    print("Complement of the big component has diameter greater than 2.")
+                return None
+    return Delta
+
+def check_Delta_for_MPRG_ladder(F,r,s,R,S,excluded,Delta):
+    components=[C for C in nx.connected_components(Delta)]
+    if len(components)>1:
+        activeindex=[i for i in range(len(components)) if (R|S)&components[i]]
+        if len(activeindex)!=1:
+            print("R and S do not lie in a connected subset of F-excluded.")
+            return
+    while True:
+        possiblevertexstars=[]
+        for v in F:
+            possiblevertexstars.append((v,star(F,v)))
+            for partialstar in powerset(star(F,v)-set([v,]),minsize=1,small_first=False):
+                partialstar=set(partialstar)
+                if set.intersection(*[MPRG_support(F,[x,]) for x in partialstar])-MPRG_support(F,[v,]):
+                    possiblevertexstars.append((v,partialstar))
+        for v,partialstar in possiblevertexstars:
+            print("Checking intersection with subset "+str(partialstar)+" of star of "+str(v)+".")
+            dead=[]
+            live=[]
+            deadsingle=[]
+            livesingle=[]
+            for C in nx.connected_components(Delta.subgraph(set(Delta)-partialstar)):
+                if len(C)==1:
+                    if C&(R|S):
+                        livesingle.append(C)
+                    else:
+                        deadsingle.append(C)
+                elif C&(R|S):
+                    live.append(C)
+                else:
+                    dead.append(C)
+            if len(live)!=1:
+                print("More than one live complementary component of star.")
+                return 
+            bigcomponent=live[0]
+            if not ((bigcomponent&S) and (bigcomponent&R)):
+                print("Big component misses one of the fixed sets.")
+                return 
+            if dead:
+                components=[C for C in nx.connected_components(Delta.subgraph(set(Delta)-set.union(*dead)))]
+                if len(components)>1:
+                    print("Dead component disconnects.")
+                    return None
+            deadleaves=[v for v in Delta if len(Delta[v])==1 and v not in R|S]
+            if diameter_at_least_three(Delta,set(Delta)-bigcomponent):
+                print("Complement of the big component has diameter greater than 2.")
+                return
+    print("Looks good.")
+
+def find_ladder_in_iterated_double(G,maxdoublingdepth,verbose=False,return_depth_only=False):
+    if is_join(G):
+        if return_depth_only:
+            return float('inf')
+        else:
+            return None
+    for doublingdepth in range(1+maxdoublingdepth):
+        result= find_ladder_at_depth(G,doublingdepth,verbose=verbose)
+        if result is not None:
+            if return_depth_only:
+                return doublingdepth
+            else:
+                return result
+    if return_depth_only:
+        return -1
+    else:
+        return None
+
+def find_ladder_at_depth(G,doublingdepth,doublingsequence=[],verbose=False):
+    if doublingdepth==0:
+        if verbose:
+            print("Searching for a ladder in iterated double with doubling sequence: "+str(doublingsequence))
+        L=find_MPRG_ladder(G)
+        if L is not None:
+            return L,doublingsequence
+        return None
+    else:
+        if doublingsequence:
+            next_to_try=[v for v in G if v[-1]!=1] # we already did some doubling and some vertices have a symmetric partner
+        else:
+            next_to_try=[v for v in G]
+        for v in next_to_try:
+            newdoublingsequence=doublingsequence+[v,]
+            result= find_ladder_at_depth(link_double(G,v),doublingdepth=doublingdepth-1,doublingsequence=newdoublingsequence,verbose=verbose)
+            if result is not None:
+                return result
+    return None
                                 
 # ----------more CFS stuff
 def get_CFS_spanning_subgraph(G,max_edges_to_remove=1):
@@ -1718,7 +2095,31 @@ def all_squares(G,V=None):
                     yield (a,d,c,b)
 
 
+def is_induced_subgraph(G,H):
+    """
+    Decide if graph H whose vertex set is a subset of the vertex set of G is an induced subgraph of G.
+    >>> G=nx.Graph(); G.add_edges_from([(0,1),(1,2),(2,0),(2,3),(3,0)]); H=nx.Graph(); H.add_edges_from([(0,1),(1,2),(2,3),(3,0)]);
+    >>> is_induced_subgraph(G,H)
+    False
+    >>> G=nx.Graph(); G.add_edges_from([(0,1),(1,2),(2,4),(4,0),(2,3),(3,0)]); H=nx.Graph(); H.add_edges_from([(0,1),(1,2),(2,3),(3,0)]);
+    >>> is_induced_subgraph(G,H)
+    True
+    """
+    for v,w in itertools.combinations(H,2):
+        if w in G[v] and w not in H[v]:
+            return False
+    return True
 
+def has_no_two_chord(G,H):
+    """
+    Decide if graph H whose vertex set is a subset of the vertex set of G has a 2--chord in G.
+    """
+    for v,w in itertools.combinations(H,2):
+        if v not in H[w]:
+            if set(G[v])&set(G[w]) and not set(H[v])&set(H[w]):
+                return False
+    return True
+            
 
 
 def geodesic_simple_cycles(G):
@@ -1741,11 +2142,14 @@ def is_join(G):
     False
     """
     v=next(iter(G)) # pick some vertex v. If G=A*B with v in A then B is contained in link(v). 
-    for B in powerset(link(G,v),minsize=1): # iterate over nonempty subsets B of link(v)
+    for B in powerset(link(G,v),minsize=1,small_first=False): # iterate over nonempty subsets B of link(v)
         A=set(G)-set(B) # take A to be the complement of B. 
         if all(a in G[b] for b in B for a in A): # check if A*B<G
             return True
     return False
+
+
+
 
 def is_cone_vertex(G,v):
     """
@@ -1757,7 +2161,7 @@ def has_cone_vertex(G):
     """
     Decide if G contains a cone vertex.
     """
-    return not any(is_cone_vertex(G,v) for v in G)
+    return any(is_cone_vertex(G,v) for v in G)
 
 def is_clique(G,C):
     """
@@ -1929,6 +2333,34 @@ def distance_two(G,v):
     """
     return (set().union(*[set(G[w]) for w in G[v]]))-star(G,v)
 
+def maximal_one_ended_suspension_subgraphs(G):
+    """
+    Generator that yields maximal suspension subsets of a graph G as tuples ((a,b),(c_1,c_2,....)) such that a and b are the suspension vertices and c_1,c_2,.... are the common neighbors of a and b in G, with at least one pair c_i and c_j are non-adjacent. 
+    """
+    ordered_nodes=[v for v in G]
+    for i in range(len(ordered_nodes)-1):
+        for j in (j for j in range(i+1,len(ordered_nodes)) if ordered_nodes[j] not in G[ordered_nodes[i]]):
+            a=ordered_nodes[i]
+            b=ordered_nodes[j]
+            common_neighbors=link(G,a)&link(G,b)
+            if is_clique(G,common_neighbors):
+                pass # a and b are not suspension points of a one-ended subgraph
+            elif len(common_neighbors)>2:
+                yield ((a,b),tuple(common_neighbors))
+            else: # a and b are diagonal of a square, but the square may be in larger suspension using other diagonal
+                c,d=common_neighbors
+                k=ordered_nodes.index(c)
+                ell=ordered_nodes.index(d)
+                if k>ell:
+                    k,ell=ell,k
+                    c,d=d,c
+                if len(link(G,c)&link(G,d))==2:
+                    if i<k:
+                        yield ((a,b),(c,d))
+                    else:
+                        pass # The square a,c,b,d is a max suspension subgraph, but we already yielded it because c comes before a in the ordered_nodes list. 
+                else:
+                    pass # The maximal suspension subgraph for which a,b are suspension points is contained in a larger suspension subgraph for which c,d are the suspension points. 
 
         
 #---------   Graph doubles, Davis-Januskiewwicz, doubling over a vertex link or star.
@@ -1961,7 +2393,7 @@ def is_double(G):
             return False
     return True
 
-def near_double(G):
+def near_double(G,precomputed_twin_module_graph=None):
     """
     Decide if G is a graph that can be turned into a double by taking link double once or twice. 
 
@@ -1998,7 +2430,10 @@ def near_double(G):
     False
     """
     # See Proposition 3.9 on near doubles.
-    Twins=twin_module_graph(G)
+    if precomputed_twin_module_graph is None:
+        Twins=twin_module_graph(G)
+    else:
+        Twins=precomputed_twin_module_graph
     Odds={S for S in Twins if len(S)%2!=0}
     if len(Odds)<=1:
         return True
@@ -2010,14 +2445,75 @@ def near_double(G):
             return True
     def link_subordinates(S):
         return {T for T in distance_two(Twins,S) if link(Twins,T)<=link(Twins,S)}
-    for A in Twins:
-        for C in link(Twins,A):
-            B=link_subordinates(A)
-            D=link_subordinates(C)
-            if Odds<={A,C}|B|D:
-                return True
+    for A,C in Twins.edges():
+        B=link_subordinates(A)
+        D=link_subordinates(C)
+        if Odds<={A,C}|B|D:
+            return True
+    return False
+
+def coarse_near_double(G,precomputed_twin_module_graph=None):
+    """
+    Same as near_double except only considers singleton twin modules instead of odd twin modules. Nonsingleton odd modules can be turned into even modules by vertex cloning.
+    """
+    if precomputed_twin_module_graph is None:
+        Twins=twin_module_graph(G)
+    else:
+        Twins=precomputed_twin_module_graph
+    Ones={S for S in Twins if len(S)==1}
+    if len(Ones)<=1:
+        return True
+    elif len(Ones)==2:
+        A,B=Ones
+        if A in Twins[B]:
+            return True
+        if link(Twins,A)<=link(Twins,B) or link(Twins,B)<=link(Twins,A):
+            return True
+    def link_subordinates(S):
+        return {T for T in distance_two(Twins,S) if link(Twins,T)<=link(Twins,S)}
+    for A,C in Twins.edges():
+        B=link_subordinates(A)
+        D=link_subordinates(C)
+        if Ones<={A,C}|B|D:
+            return True
+    return False
+
+def new_coarse_near_double(G,precomputed_twin_module_graph=None):
+    """
+    Same as near_double except only considers unclonable singleton twin modules instead of all odd twin modules. All other modules can be turned into even modules by vertex cloning.
+    """
+    if precomputed_twin_module_graph is None:
+        Twins=twin_module_graph(G)
+    else:
+        Twins=precomputed_twin_module_graph
+    unclonable_singletons=set()
+    for S in Twins:
+        if len(S)==1:
+            v=next(iter(S))
+            if not vertex_is_clonable(G,v):
+                unclonable_singletons.add(S)
+    if len(unclonable_singletons)<=1:
+        return True
+    elif len(unclonable_singletons)==2:
+        A,B=unclonable_singletons
+        if A in Twins[B]:
+            return True
+        if link(Twins,A)<=link(Twins,B) or link(Twins,B)<=link(Twins,A):
+            return True
+    def link_subordinates(S):
+        return {T for T in distance_two(Twins,S) if link(Twins,T)<=link(Twins,S)}
+    for A,C in Twins.edges():
+        B=link_subordinates(A)
+        D=link_subordinates(C)
+        if unclonable_singletons<={A,C}|B|D:
+            return True
     return False
                         
+def vertex_is_clonable(G,v):
+    """
+    Given a vertex v in a triangle-free graph G, decide if v is clonable. 
+    """
+    return len({w for w in G if link(G,v)<=link(G,w)})>=2
 
 def link_double(Gamma,vertex):
     """
@@ -2157,7 +2653,15 @@ def tree(valence,radius):
                 spheres[rad].add(current_node)
     return G
           
-
+def mixedmultiple(inputgraph,multiplicityfunction):
+    G=nx.Graph()
+    for (v,w) in inputgraph.edges():
+        for i in range(multiplicityfunction[v]):
+            for j in range(multiplicityfunction[w]):
+                G.add_edge((v,i),(w,j))
+    return G
+    
+    
 
 def thenonconstructablemincfsexample(): # This is a minimal CFS graph that is not strongly CFS. 19 nodes. Smallest known so far. Not triangle-free.
     G=nx.Graph()
@@ -2390,13 +2894,101 @@ def color_verts(G):
 
         
 
-def powerset(iterable,minsize=0,maxsize=float('inf')):
+def powerset(iterable,minsize=0,maxsize=float('inf'),small_first=True):
     aslist=list(iterable)
-    return itertools.chain.from_iterable(itertools.combinations(aslist, r) for r in range(minsize,1+min(maxsize,len(aslist))))
+    themax=min(maxsize,len(aslist))
+    if small_first:
+        return itertools.chain.from_iterable(itertools.combinations(aslist, r) for r in range(minsize,1+themax))
+    else:
+        return itertools.chain.from_iterable(itertools.combinations(aslist, r) for r in range(themax,minsize-1,-1))
+
+
+def populatedataframe(setofgraphs,verbose=False):
+    """
+    Input set of graphs. Compute bunch of stuff. Output dataframe.
+    """
+    df = pd.DataFrame(columns=['planar', 'nodes', 'RAAGedy', 'minimal', 'strong', 'near_double', 'ladder',
+       'Dani-Levcovitz', 'ZZ_obstruction', 'stable_cycle_depth',
+       'suspension_cycle', 'iterated_splittings', 'goc', 'graph',
+       'locally_connected_visual_boundary', 'totally_disconnected_Morse_boundary'])
+    total=len(setofgraphs)
+    count=0
+    for G in setofgraphs:
+        count+=1
+        if verbose:
+            print(str(count)+"/"+str(total))
+        thisentry=populatedataframecomputations(G,bool(verbose==2))
+        if verbose:
+            print(thisentry)
+        df = pd.concat([df, thisentry], ignore_index=True)
+    return df
+
+def populatedataframecomputations(G,verbose=False):
+    if verbose:
+        print("New graph with "+str(len(G))+" vertices.")
+    thisentry=dict()
+    thisentry['graph']=G
+    thisentry['nodes']=len(G)
+    thisentry['planar']=nx.is_planar(G)
+    thisentry['minimal']=is_minimal_CFS(G)
+    thisentry['strong']=is_strongly_CFS(G)
+    if verbose:
+        print("Computing JSJ decomposition.")
+    thisentry['goc']=graph_of_cylinders(G,subdivided_K4s_of_G=None,assume_triangle_free=True,assume_one_ended=True)
+    if verbose:
+        print("JSJ decomposition with "+str(len(thisentry['goc'].edges()))+" edges.")
+    thisentry['near_double']=near_double(G)
+    if thisentry['near_double']:
+        if verbose:
+            print("Graph is a near double.")
+        thisentry['RAAGedy']=True
+        thisentry['suspension_cycle']=False
+        thisentry['locally_connected_visual_boundary']=False
+        thisentry['totally_disconnected_Morse_boundary']=True
+        thisentry['iterated_splittings']=False
+        thisentry['ZZ_obstruction']=False
+        thisentry['ladder']=float('inf')
+        thisentry['stable_cycle_depth']=float('inf')
+    else:
+        if verbose:
+            print("Graph is not a near double.")
+        thisentry['suspension_cycle']=has_cycle_of_suspension_poles(G)
+        thisentry['locally_connected_visual_boundary']=has_locally_connected_boundary(G,assume_one_ended=True,assume_two_dimensional=True)
+        if Fioravanti_Karrer_condition(G,assume_triangle_free=True,assume_one_ended=True,GOC=thisentry['goc'],verbose=False):
+            thisentry['totally_disconnected_Morse_boundary']=True
+            thisentry['stable_cycle_depth']=float('inf')
+        else:
+            thisentry['stable_cycle_depth']=find_good_cycle_in_iterated_double(G,2,verbose=False,return_depth_only=True)
+            if thisentry['stable_cycle_depth'] in {0,1,2,3}:
+                thisentry['totally_disconnected_Morse_boundary']=False
+            else:
+                thisentry['totally_disconnected_Morse_boundary']=None
+        thisentry['iterated_splittings']=has_iterated_splittings(G,GOC=thisentry['goc'])
+        thisentry['ZZ_obstruction']=has_ZZ_RAAG_obstruction(G,GOC=thisentry['goc'])
+        thisentry['ladder']=find_ladder_in_iterated_double(G,2,return_depth_only=True)
+        if thisentry['suspension_cycle'] or thisentry['iterated_splittings'] or thisentry['ZZ_obstruction'] or (thisentry['ladder'] in {0,1,2}) or (thisentry['totally_disconnected_Morse_boundary'] is False):
+            thisentry['RAAGedy']=False
+            thisentry['Dani-Levcovitz']=False
+        else:
+            thisentry['RAAGedy']=None
+    if thisentry['RAAGedy'] is not False:
+        if verbose==2:
+            print("Search FIDL.")
+        thisentry['Dani-Levcovitz']=exists_DL_relative_to_GOC(G,thisentry['goc'])
+        if thisentry['Dani-Levcovitz']:
+            thisentry['RAAGedy']=True
+            assert(thisentry['suspension_cycle']==False)
+            assert(thisentry['locally_connected_visual_boundary']==False)
+            thisentry['totally_disconnected_Morse_boundary']=True
+            assert(thisentry['iterated_splittings']==False)
+            assert(thisentry['ZZ_obstruction']==False)
+            thisentry['ladder']=float('inf')
+            thisentry['stable_cycle_depth']=float('inf')
+    return pd.Series(thisentry).to_frame().T
 
 
 
-            
+
 if __name__ == "__main__":
     import doctest
     doctest.testmod()
