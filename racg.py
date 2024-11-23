@@ -6,13 +6,25 @@ from matplotlib.colors import Colormap
 import copy
 import netgraph # This is used by the drawing functions draw, draw_Dani_Levcovitz_pair, draw_Dani_Levcovitz_in_diagonal to draw interactive graphs, in which vertices can be repositioned and vertices and edges can be added or removed. Can be commented out if you don't want to draw graphs, or will draw them using some other graph drawing package. 
 import cmath # This is only used in graph2tikz to export graph to tikz format for inclusion into latex. 
-import pandas as pd
-""" 
-import pickle
-with open('CFS_graphs_up_to_11.pkl','rb') as myfile:
-    CFS=pickle.load(myfile)
-# CFS is a dict of dicts whose keys are representatives of each isomorphism type of CFS graph with up to 11 vertices, and whose values are dicts of properties of the corresponding RACG.
+
+
+
+
+
 """
+All of these functions work with graphs represented by nx.Graph class. 
+
+Most implementations are currently for triangle-free graphs. May give wrong answers if the graph has triangles!
+"""
+
+
+
+
+
+
+
+
+
 
 def draw(G,H=None,K=None,node_labels=True,**kwargs):
     """
@@ -55,6 +67,10 @@ def draw(G,H=None,K=None,node_labels=True,**kwargs):
     plot_instance = netgraph.EditableGraph(G,node_labels=node_labels,node_label_fontdict=dict(size=11),edge_color=edge_color,**kwargs)
     plt.show(block=False)
     return plot_instance
+
+
+
+
 
 
     
@@ -128,7 +144,7 @@ def is_minimal_CFS(G,max_edges_to_remove=1):
 #---------   Graph doubles, Davis-Januskiewwicz, doubling over a vertex link or star.
 def Davis_Januskiewicz(Gamma):
     """
-    Given a graph Gamma defining a right-angled Artin group G, return a graph defining a right-angled Coxeter group that is commensurable to G. This is the graph Gamma' of Davis-Januskiewicz 2000.
+    Given a graph Gamma defining a right-angled Artin group G, return a graph defining a right-angled Coxeter group that is commensurable to G. This is the graph Gamma' of Davis-Januskiewicz 2000. Also called the graph double of Gamma.
     """
     return double(Gamma)
 
@@ -205,7 +221,7 @@ def find_in_iterated_double(thegraph,thefunction,maxdoublingdepth=3,verbose=Fals
     """
     Given an input graph and a function that evaluates on graphs to either None or a set of vertices, do a breadth first search on link doubles of the input graph until the function evaluates to not None.
 
-    Stop after depth maxdoublingdepth. Maximum search depth of 3 implemented. 
+    Stop after depth maxdoublingdepth. 
 
     If successfull, output the result of the input function and the doubling sequence used to find the graph with positive answer. Otherwise, return None.
 
@@ -213,6 +229,7 @@ def find_in_iterated_double(thegraph,thefunction,maxdoublingdepth=3,verbose=Fals
 
     symmetries can be given as a list of sets of vertices that are equivalent under some symmetry of the graph. In this case only at most one vertex from each set will be used for depth=1 doubling. 
     """
+    # Currently only maxdoublingdepth<=3 allowed because we have hardcoded ways to choose one representative among doubling sequences that yield isomorphic graphs. 
     if maxdoublingdepth>3:
         raise InputError("Depth >3 not implemented.")
     G=nx.Graph()
@@ -300,7 +317,7 @@ def star_double(Gamma,vertex):
 
 
 #--------  stable cycles
-# Functions for finding stable cycles in the graph or in iterated doubles over vertices. 
+# Functions for finding stable cycles in the graph.
 # Stable cycle means a cycle that is incuded and square complete,  giving a stable virtual surface subgroup.
 
 def has_stable_cycle(G):
@@ -341,7 +358,19 @@ def get_stable_cycles(G,legalturns=None,precomputeddiagonals=None,forbidden=set(
             yield c
         newforbidden.add(v) # no stable cycles at v, so in continuing search do not consider paths through v.
     
+def get_stable_cycle(G,legalturns=None,precomputeddiagonals=None,forbidden=set()):
+    """
+    Return a tuple of vertices representing an induced, square complete cycle in G of length at least 5, if one exists, or None.
+    """
+    stable_cycle_generator=get_stable_cycles(G,legalturns=legalturns,precomputeddiagonals=precomputeddiagonals,forbidden=forbidden)
+    try:
+        the_cycle=next(stable_cycle_generator)
+        return the_cycle
+    except StopIteration:
+        return None
 
+
+    
 def is_induced_cycle(G,S):
     induced_subgraph=G.subgraph(S)
     return all(len(induced_subgraph[v])==2 for v in induced_subgraph) and nx.is_connected(induced_subgraph)
@@ -2495,7 +2524,37 @@ def has_separating_star(G):
         
 
 
-
+def find_places_to_unfold(G):
+    for E,F in get_separating_maximal_thick_joins(G):
+        therest=G.subgraph(set(G)-E-F)
+        thefactors=[E,F]
+        for D in nx.connected_components(therest):
+            for i in range(2):
+                factor=thefactors[i]
+                Aplus={v for v in factor if set(D)&set(G[v])}
+                Bplus={v for v in factor if (set(therest)-set(D))&set(G[v])}
+                C=Aplus&Bplus
+                A=Aplus-C
+                B=factor-A-C
+                if len(C)==1 and A and B:
+                    yield(A,B,C,D,thefactors[i],thefactors[(i+1)%2])
+                           
+                
+def unfold(G,A,B,C,D,E,F):
+    U=G.copy()
+    newvertex=0
+    while newvertex in U:
+        newvertex+=1
+    U.add_node(newvertex)
+    for f in F:
+        U.add_edge(newvertex,f)
+    assert(len(C)==1)
+    c=next(iter(C))
+    for d in D:
+        if c in U[d]:
+            U.remove_edge(c,d)
+            U.add_edge(newvertex,d)
+    return U
 
 
             
@@ -2504,7 +2563,7 @@ def has_separating_star(G):
 
 def is_near_double(G,precomputed_twin_module_graph=None):
     """
-    Decide if G is a graph that can be turned into a double by taking link double once or twice. 
+    Decide if triangle-free G is a graph that can be turned into a double by taking link double once or twice. 
 
     >>> B=nx.Graph();B.add_edge(0,1);B.add_edge(2,1);B.add_edge(2,3);B.add_edge(3,4);
     >>> D=double(B);is_near_double(D)
@@ -2538,7 +2597,6 @@ def is_near_double(G,precomputed_twin_module_graph=None):
     >>> D.remove_node((1,1)); D.remove_node((3,1)); is_near_double(D)
     False
     """
-    # See Proposition 3.9 on near doubles.
     if precomputed_twin_module_graph is None:
         Twins=twin_module_graph(G)
     else:
@@ -2939,6 +2997,11 @@ def color_verts(G):
 #----------------------------------
 
 def powerset(iterable,minsize=0,maxsize=float('inf'),small_first=True):
+    """
+    Return a generator of all subsets of the input iteratble. 
+    Limit the size of returned subsets with minsize and maxsize parameters. 
+    Default is to yield subsets by increasing cardinality; use small_first=False to yield by decreasing cardinality.
+    """
     aslist=list(iterable)
     themax=min(maxsize,len(aslist))
     if small_first:
@@ -2947,106 +3010,7 @@ def powerset(iterable,minsize=0,maxsize=float('inf'),small_first=True):
         return itertools.chain.from_iterable(itertools.combinations(aslist, r) for r in range(themax,minsize-1,-1))
 
 
-#---------------------------------- some functions for a specific pandas dataframe of CFS graphs. 
-def dfindex(data,graph):
-    N=len(graph)
-    E=len(graph.edges())
-    for index,row in (data.loc[(data.nodes==N)&(data.edges==E)]).iterrows():
-        if nx.is_isomorphic(graph,row['graph']):
-            return index
-    raise IndexError("Isomorphism type of graph does not match any graph in the data set.")
 
-def dflookup(data,graph):
-    N=len(graph)
-    E=len(graph.edges())
-    for index,row in (data.loc[(data.nodes==N)&(data.edges==E)]).iterrows():
-        if nx.is_isomorphic(graph,row['graph']):
-            print(data.loc[index])
-            return 
-    raise IndexError("Isomorphism type of graph does not match any graph in the data set.")
-
-def populatedataframe(setofgraphs,verbose=False):
-    """
-    Input set of graphs. Compute bunch of stuff. Output dataframe.
-    """
-    df = pd.DataFrame(columns=['planar', 'nodes', 'RAAGedy', 'minimal', 'strong', 'near_double', 'ladder',
-       'Dani-Levcovitz', 'ZZ_obstruction', 'stable_cycle_depth',
-       'suspension_cycle', 'iterated_splittings', 'goc', 'graph',
-       'locally_connected_visual_boundary', 'totally_disconnected_Morse_boundary'])
-    total=len(setofgraphs)
-    count=0
-    for G in setofgraphs:
-        count+=1
-        if verbose:
-            print(str(count)+"/"+str(total))
-        thisentry=populatedataframecomputations(G,bool(verbose==2))
-        if verbose:
-            print(thisentry)
-        df = pd.concat([df, thisentry], ignore_index=True)
-    return df
-
-def populatedataframecomputations(G,verbose=False):
-    if verbose:
-        print("New graph with "+str(len(G))+" vertices.")
-    thisentry=dict()
-    thisentry['graph']=G
-    thisentry['nodes']=len(G)
-    thisentry['planar']=nx.is_planar(G)
-    thisentry['minimal']=is_minimal_CFS(G)
-    thisentry['strong']=is_strongly_CFS(G)
-    if verbose:
-        print("Computing JSJ decomposition.")
-    thisentry['goc']=graph_of_cylinders(G,subdivided_K4s_of_G=None,assume_triangle_free=True,assume_one_ended=True)
-    if verbose:
-        print("JSJ decomposition with "+str(len(thisentry['goc'].edges()))+" edges.")
-    thisentry['near_double']=near_double(G)
-    if thisentry['near_double']:
-        if verbose:
-            print("Graph is a near double.")
-        thisentry['RAAGedy']=True
-        thisentry['suspension_cycle']=False
-        thisentry['locally_connected_visual_boundary']=False
-        thisentry['totally_disconnected_Morse_boundary']=True
-        thisentry['iterated_splittings']=False
-        thisentry['ZZ_obstruction']=False
-        thisentry['ladder']=float('inf')
-        thisentry['stable_cycle_depth']=float('inf')
-    else:
-        if verbose:
-            print("Graph is not a near double.")
-        thisentry['suspension_cycle']=has_cycle_of_suspension_poles(G)
-        thisentry['locally_connected_visual_boundary']=has_locally_connected_boundary(G,assume_one_ended=True,assume_two_dimensional=True)
-        if Fioravanti_Karrer_condition(G,assume_triangle_free=True,assume_one_ended=True,GOC=thisentry['goc'],verbose=False):
-            thisentry['totally_disconnected_Morse_boundary']=True
-            thisentry['stable_cycle_depth']=float('inf')
-        else:
-            thisentry['stable_cycle_depth']=find_good_cycle_in_iterated_double(G,2,verbose=False,return_depth_only=True)
-            if thisentry['stable_cycle_depth'] in {0,1,2,3}:
-                thisentry['totally_disconnected_Morse_boundary']=False
-            else:
-                thisentry['totally_disconnected_Morse_boundary']=None
-        thisentry['iterated_splittings']=has_iterated_splittings(G,GOC=thisentry['goc'])
-        thisentry['ZZ_obstruction']=has_ZZ_RAAG_obstruction(G,GOC=thisentry['goc'])
-        thisentry['ladder']=find_ladder_in_iterated_double(G,2,return_depth_only=True)
-        if thisentry['suspension_cycle'] or thisentry['iterated_splittings'] or thisentry['ZZ_obstruction'] or (thisentry['ladder'] in {0,1,2}) or (thisentry['totally_disconnected_Morse_boundary'] is False):
-            thisentry['RAAGedy']=False
-            thisentry['Dani-Levcovitz']=False
-        else:
-            thisentry['RAAGedy']=None
-    if thisentry['RAAGedy'] is not False:
-        if verbose==2:
-            print("Search FIDL.")
-        thisentry['Dani-Levcovitz']=exists_DL_relative_to_GOC(G,thisentry['goc'])
-        if thisentry['Dani-Levcovitz']:
-            thisentry['RAAGedy']=True
-            assert(thisentry['suspension_cycle']==False)
-            assert(thisentry['locally_connected_visual_boundary']==False)
-            thisentry['totally_disconnected_Morse_boundary']=True
-            assert(thisentry['iterated_splittings']==False)
-            assert(thisentry['ZZ_obstruction']==False)
-            thisentry['ladder']=float('inf')
-            thisentry['stable_cycle_depth']=float('inf')
-    return pd.Series(thisentry).to_frame().T
 
 
 
