@@ -3338,12 +3338,18 @@ def is_coarse_near_double(G,precomputed_twin_module_graph=None):
         if unclonable_singletons<={A,C}|B|D:
             return True
     return False
+
+def vertex_is_satellite_of(G,v):
+    """
+    Return the set of vertices of G of which v is a satellite.
+    """
+    return {w for w in G if link(G,v)<=link(G,w) and w!=v}
                         
 def vertex_is_clonable(G,v):
     """
     Given a vertex v in a triangle-free graph G, decide if v is clonable. 
     """
-    return len({w for w in G if link(G,v)<=link(G,w)})>=2
+    return len(vertex_is_satellite_of(G,v))>=2
 
 def clonable_vertices(G,twin_free=False):
     """
