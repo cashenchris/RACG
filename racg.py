@@ -1,10 +1,16 @@
 import networkx as nx # Works with networkx 3.2.1. (Prior to 3.1, nx.simple_cycles only works for directed graphs.)
 from networkx.algorithms import bipartite
 import itertools
+import copy
+
+
+# These are used by the drawing functions draw, draw_Dani_Levcovitz_pair, draw_Dani_Levcovitz_in_diagonal to draw interactive graphs, in which vertices can be repositioned and vertices and edges can be added or removed. Can be commented out if you don't want to draw graphs, or will draw them using some other graph drawing package. 
 import matplotlib.pyplot as plt
 from matplotlib.colors import Colormap
-import copy
-import netgraph # This is used by the drawing functions draw, draw_Dani_Levcovitz_pair, draw_Dani_Levcovitz_in_diagonal to draw interactive graphs, in which vertices can be repositioned and vertices and edges can be added or removed. Can be commented out if you don't want to draw graphs, or will draw them using some other graph drawing package. 
+import netgraph
+
+
+
 import cmath # This is only used in graph2tikz to export graph to tikz format for inclusion into latex. 
 
 
@@ -64,7 +70,24 @@ def draw(G,H=None,K=None,node_labels=True,**kwargs):
                 edge_color[e]='blue'
             else:
                 edge_color[e]='black'
-    plot_instance = netgraph.EditableGraph(G,node_labels=node_labels,node_label_fontdict=dict(size=11),edge_color=edge_color,**kwargs)
+    if node_labels:
+        nodedict=dict() # avoid having the word "frozenset" printed in node labels
+        for g in G:
+            if type(g)==frozenset:
+                try:
+                    if any(type(x)==frozenset for x in g):
+                        nodedict[g]=tuple([x if type(x)!=frozenset else tuple(x) for x in g])
+                except TypeError:
+                    nodedict[g]=set(g)
+            else:
+                try:
+                    if any(type(x)==frozenset for x in g):
+                        nodedict[g]=tuple([x if type(x)!=frozenset else tuple(x) for x in g])
+                except TypeError:
+                    nodedict[g]=g
+        plot_instance = netgraph.EditableGraph(G,node_labels=nodedict,node_label_fontdict=dict(size=11),edge_color=edge_color,**kwargs)
+    else:
+        plot_instance = netgraph.EditableGraph(G,node_labels=False,node_label_fontdict=dict(size=11),edge_color=edge_color,**kwargs)
     plt.show(block=False)
     return plot_instance
 
@@ -77,6 +100,13 @@ def draw(G,H=None,K=None,node_labels=True,**kwargs):
 def is_CFS(G,precomputed_diagonal_graph=None):
     """
     True if G is a CFS graph, which means that, modulo deleting a join, the square graph of G contains a component with full support.
+
+    >>> G=cycle_graph(4); is_CFS(G)
+    True
+    >>> G=cycle_graph(5); is_CFS(G)
+    False
+    >>> G=suspension(3); is_CFS(G)
+    True
     """
     Gprime=G.subgraph([v for v in G if G.degree[v]<len(G)-1])
     if precomputed_diagonal_graph is None:
@@ -94,6 +124,11 @@ def is_CFS(G,precomputed_diagonal_graph=None):
 def is_strongly_CFS(G):
     """
     Decide if the square graph of G is connected and has full support.
+
+    >>> G=circulant(11,3); is_strongly_CFS(G)
+    True
+    >>> G.remove_node(10); is_strongly_CFS(G)
+    False
     """
     Gprime=G.subgraph([v for v in G if G.degree[v]<len(G)-1])
     sg=square_graph(Gprime)
@@ -109,6 +144,11 @@ def is_minsquare(G,V=None):
     """
     Determine if induced subgraph H of G spanned by V is a minsquare subgraph of G; that is, H is square-complete, contains a square, and is minimal among subgraphs of G with these properties.
     If V is None, determine if G itself is minsquare.
+
+    >>> G=nx.Graph(); G.add_edges_from([(0,1),(0,3),(0,9),(1,2),(1,4),(2,3),(2,5),(3,4),(3,6),(4,5),(4,7),(5,6),(5,8),(6,7),(6,9),(7,8),(8,9)]); is_minsquare(G)
+    False
+    >>> is_minsquare(G,{0,3,6,9})
+    True
     """
     if V is None:
         verts=set(G)
@@ -144,7 +184,7 @@ def is_minimal_CFS(G,max_edges_to_remove=1):
 #---------   Graph doubles, Davis-Januskiewwicz, doubling over a vertex link or star.
 def Davis_Januskiewicz(Gamma):
     """
-    Given a graph Gamma defining a right-angled Artin group G, return a graph defining a right-angled Coxeter group that is commensurable to G. This is the graph Gamma' of Davis-Januskiewicz 2000. Also called the graph double of Gamma.
+    Given a graph Gamma defining a right-angled Artin group G, return a graph defining a right-angled Coxeter group that is commensurable to G. This is the graph Gamma' of Davis-Januszkiewicz 2000. Also called the 'graph double' of Gamma.
     """
     return double(Gamma)
 
@@ -163,17 +203,21 @@ def double(Gamma):
 def is_double(G):
     """
     Return bool(G is a double graph).
+    >>> G=double(nx.path_graph(4)); is_double(G)
+    True
+    >>> G.add_edges_from([((0,2),(1,0)),((0,2),(1,1))]); is_double(G)
+    False
     """
     #Characterization of double graphs: for each link that occurs in G, the set of vertices having that link has even order.
-    for v in G:
-        M=twins(G,v)
-        if len(M)%2!=0:
-            return False
-    return True
+    Gemini=twin_module_graph(G)
+    return not any(Gemini.nodes[M]['weight']%2 for M in Gemini)
+    
 
 def undouble(G):
     """
     Return a graph of which G is a double.
+    >>> G=nx.path_graph(4); nx.is_isomorphic(G,undouble(double(G)))
+    True
     """
     T=twin_module_graph(G)
     assert(not any(len(M)%2 for M in T)) # if not, this graph is not a double
@@ -198,6 +242,8 @@ def undouble(G):
 def link_double(Gamma,vertex):
     """
     Return graph that is double of Gamma over link of vertex, removing vertex. For right-angled Coxter groups this defines an index 2 subgroup.
+    >>> G=cycle_graph(4); H=link_double(G,0); nx.is_isomorphic(G,H)
+    True
     """
     Gammaprime=nx.Graph()
     for v,w in Gamma.edges():
@@ -287,7 +333,7 @@ def get_link_undoubling(G,name_of_new_vertex=None,forbidden_link=None):
         
         
 
-def find_in_iterated_double(thegraph,thefunction,maxdoublingdepth=3,verbose=False,return_depth_only=False,symmetries=None):
+def find_in_iterated_double(thegraph,thefunction,maxdoublingdepth=3,verbose=False,return_depth_only=False,startingdepth=0):
     """
     Given an input graph and a function that evaluates on graphs to either None or a set of vertices, do a breadth first search on link doubles of the input graph until the function evaluates to not None.
 
@@ -296,61 +342,56 @@ def find_in_iterated_double(thegraph,thefunction,maxdoublingdepth=3,verbose=Fals
     If successfull, output the result of the input function and the doubling sequence used to find the graph with positive answer. Otherwise, return None.
 
     if return_depth_only=True then output only the depth at which a positive answer is found, or -1 if no answer is found.
-
-    symmetries can be given as a list of sets of vertices that are equivalent under some symmetry of the graph. In this case only at most one vertex from each set will be used for depth=1 doubling. The algorithm already computes the twin modules, so symmetries coming from permuting twins are already included.
     """
-    # Currently only maxdoublingdepth<=3 allowed because we have hardcoded ways to choose one representative among doubling sequences that yield isomorphic graphs. 
-    if maxdoublingdepth>3:
-        raise InputError("Depth >3 not implemented.")
-    G=nx.Graph()
     nodes=[v for v in thegraph]
-    def rewrite_tuple(t): # rewrites left nested tuple as one long tuple
+    G=nx.Graph() # make an isomorphic copy of thegraph whose nodes are integers
+    for (v,w) in thegraph.edges():
+        G.add_edge(nodes.index(v),nodes.index(w))
+    def rewrite_tuple(t): # rewrites left nested tuple as one long tuple, with nodes as in input graph
         if type(t)==tuple:
             return (rewrite_tuple(t[0]),t[1])
         else:
             return nodes[t]
-    G.add_edges_from([(nodes.index(v),nodes.index(w)) for (v,w) in thegraph.edges()])
-    Gemini=twin_module_graph(G)
-    twinreps=sorted([min(twinmodule) for twinmodule in Gemini])
-    if symmetries:
-        orderedsym=[{nodes.index(v) for v in S} for S in symmetries]
-    else:
-        orderedsym=[]
-    equivalentvertices=nx.Graph()
-    for S in list(Gemini)+orderedsym:
-        equivalentvertices.add_node(frozenset(S))
-    for S,T in itertools.combinations(set(equivalentvertices),2):
-        if S&T:
-            equivalentvertices.add_edge(S,T)
-    equivalenceclasses=[frozenset.union(*[S for S in component]) for component in nx.connected_components(equivalentvertices)]
-    firstleveldoubling=sorted([min(EQclass) for EQclass in equivalenceclasses])
-    currentdepth=0
+    if startingdepth==0:
+        if verbose:
+            print("Searching with doubling sequence: []")
+        result=thefunction(G)
+        if result is not None:
+            if return_depth_only:
+                return 0
+            else:
+                return result,[]
+    currentdepth=1 
+    doublingsequences=[[]]
     while currentdepth<=maxdoublingdepth:
-        if currentdepth==0:
-            doublingsequences=[tuple([])]
-        elif currentdepth==1:
-            doublingsequences=[(i,) for i in firstleveldoubling]
-        elif currentdepth==2:
-            doublingsequences=[[i,(j,0)] for i in firstleveldoubling for j in twinreps if j>i or (j<i and j not in G[i])]
-        elif currentdepth==3:
-            doublingsequences=[[i,(j,0),((k,p),0)] for i in firstleveldoubling for j in twinreps if j>i or (j<i and j not in G[i]) for k in range(len(G)) for p in {0,1} if  k!=i and ((p==0 and( (k<j and k not in G[j]) or k>j)) or (p==1 and k not in G[i]))]
-        for ds in doublingsequences:
-            if verbose:
-                print("Searching with doubling sequence: "+str(ds))
-            if len(ds)==0:
-                thisdouble=G
-            elif len(ds)==1:
-                thisdouble=link_double(G,ds[0])
-            elif len(ds)==2:
-                thisdouble=link_double(link_double(G,ds[0]),ds[1])
-            elif len(ds)==3:
-                thisdouble=link_double(link_double(link_double(G,ds[0]),ds[1]),ds[2])
-            result=thefunction(thisdouble)
-            if result is not None:
-                if return_depth_only:
-                    return currentdepth
-                else:
-                    return result,[rewrite_tuple(t) for t in ds]
+        if verbose:
+            print('Constructing doubling sequence of length '+str(currentdepth)+'.')
+        previous_doublingsequences=doublingsequences
+        doublingsequences=[]
+        for ds in previous_doublingsequences:
+            prevdouble=G
+            lastlink=set()
+            for v in ds:
+                lastlink=link(prevdouble,v)
+                prevdouble=link_double(prevdouble,v)
+            EQ=vertex_equivalence_classes(prevdouble)
+            EQreps=sorted([min(EQclass) for EQclass in EQ])
+            for v in EQreps:
+                if lastlink and v[0] in lastlink:
+                    if v[0]<ds[-1]: # link doubling over adjacent vertices commutes. Skip this possibility because it is isomorphic to a graph already considered. 
+                        continue
+                new_ds=ds+[v,]
+                thisdouble=link_double(prevdouble,v)
+                doublingsequences.append(new_ds)
+                if currentdepth>=startingdepth:
+                    if verbose:
+                        print("Searching with doubling sequence: "+str(new_ds))
+                    result=thefunction(thisdouble)
+                    if result is not None:
+                        if return_depth_only:
+                            return currentdepth
+                        else:
+                            return result,[rewrite_tuple(t) for t in new_ds]
         currentdepth+=1
     if return_depth_only:
         return -1
@@ -442,10 +483,16 @@ def get_stable_cycle(G,legalturns=None,precomputeddiagonals=None,forbidden=set()
 
     
 def is_induced_cycle(G,S):
+    """
+    Check if the set S is the vertex set of an induced cycle subgraph of G.
+    """
     induced_subgraph=G.subgraph(S)
     return all(len(induced_subgraph[v])==2 for v in induced_subgraph) and nx.is_connected(induced_subgraph)
     
 def is_stable_cycle(G,S):
+    """
+    Check if S is the vertex set of an induced cycle subgraph of G that has length at least 5 and is square complete.
+    """
     return len(S)>4 and is_induced_cycle(G,S) and  is_square_complete(G,S)
 
 def get_stable_cycle_at_vert(G,v,legalturns,prefix=tuple([]),precomputeddiagonals=None,forbidden=set([])):
@@ -583,7 +630,7 @@ def minsquare_subgraphs(G):
         S=support(C)
         for x,y in itertools.combinations(S,2):
             if are_diagonal(G,x,y):
-                diag=tuple(sorted([x,y]))
+                diag=frozenset({x,y})
                 for Cprime in components:
                     if diag in Cprime:
                         component_completion.add_edge(C,Cprime)
@@ -709,16 +756,10 @@ def draw_Dani_Levcovitz_in_diagonal(Gamma,Lambda):
 def Dani_Levcovitz_Delta(Gamma,Lambda):
     Delta=nx.Graph()
     for (a,b) in Lambda.edges():
-        if b<a:
-            a,b=b,a
-        Delta.add_node((a,b))
-    for ((a,b),(c,d)) in itertools.combinations(Lambda.edges(),2):
-        if b<a:
-            a,b=b,a
-        if d<c:
-            c,d=d,c
-        if is_induced_square(Gamma,{a,b,c,d}):
-            Delta.add_edge((a,b),(c,d))
+        Delta.add_node(frozenset({a,b}))
+    for (e,f) in itertools.combinations(Lambda.edges(),2):
+        if is_induced_square(Gamma,e|f):
+            Delta.add_edge(e,f)
     return Delta
 
 def find_Dani_Levcovitz_subgraph(Gamma,verbose=False,assume_triangle_free=False,assume_CFS=False):
@@ -962,7 +1003,7 @@ def is_satellite(G,v):
     """
     Decide if v is a satellite vertex of G.
     """
-    return any(link(G,v)<=link(G,w) for w in (w for w in G if w!=v))
+    return any(link(G,v)<=link(G,w) for w in distance_two(G,v))
 
 def satellite_dismantling_sequences(G,assume_strong_CFS=False,assume_one_ended=False,assume_triangle_free=False):
     """
@@ -1518,43 +1559,7 @@ def has_iterated_splittings(G,GOC=None,**kwargs):
             return True
     return False
 
-def has_cycle_of_suspension_poles(G):
-    """
-    Decide if G contains vertices v_0,...,v_{n-1} such that for each i the pair {v_i,v_{(i+1)}%n} are the suspension points of a suspension that is not a square and is a maximal join subgraph of G. 
 
-    >>> G=nx.Graph(); G.add_edges_from([(0,3),(0,4),(0,5),(0,6),(1,3),(1,4),(1,6),(2,3),(2,5),(2,6),(3,7),(4,7),(5,7)]); has_cycle_of_suspension_poles(G)
-    False
-    >>> G=nx.Graph(); G.add_edges_from([(0,3),(0,4),(0,5),(0,6),(1,3),(1,4),(1,6),(2,3),(2,5),(2,6),(3,7),(4,7),(5,7),(1,8),(7,8)]); has_cycle_of_suspension_poles(G)
-    True
-    """
-    P=nx.Graph()
-    for A,B in maximal_joins(G):
-        if len(A)>len(B):
-            A,B=B,A
-        if len(A)!=2 or len(B)<=2:
-            pass
-        else:
-            P.add_edge(*A)
-    return bool(P) and not nx.is_forest(P)
-
-
-
-def get_cycle_of_suspension_poles(G):
-    """
-    Return simple cycles v_0,...,v_{n-1} such that for each i the pair {v_i,v_{(i+1)}%n} are the suspension points of a suspension that is not a square and is a maximal join subgraph of G.
-    """
-    P=nx.Graph()
-    for A,B in maximal_joins(G,only_thick=True):
-        if len(A)>len(B):
-            A,B=B,A
-        if len(A)!=2 or len(B)<=2:
-            pass
-        else:
-            P.add_edge(*A)
-    if bool(P) and not nx.is_forest(P):
-        return next(nx.simple_cycles(P))
-    else:
-        return None
 
   
 
@@ -1703,201 +1708,22 @@ def is_one_or_two_flat(G,S):
         return True
     return False
 
-def compliant_cycle(G,verbose=False,relax_S_zero=False,enforce_extra_S_zero_condition=False, only_triangles=False,only_squares=False):
-    Aux=nx.Graph()
-    for (v,w) in (nx.complement(G)).edges():
-        compliant_containers=[C for C in compliant_subsets(G,{v,w})]
-        if compliant_containers:
-            Aux.add_edge(v,w)
-            Aux[v][w]['compliant_closure']=min(compliant_containers,key=len) # this works because compliant subsets are closed under intersection, so there is unique minimum
-    if len(Aux)<3:
-        return None
-    def validate_anticlique(A):
-        if len(A)<3:
-            return False
-        if any(A[(i+1)%len(A)] not in Aux[A[i]] for i in range(len(A))):
-            return False
-        S=[Aux[A[i]][A[(i+1)%len(A)]]['compliant_closure'] for i in range(len(A))]
-        if not all(set(A)&S[i]=={A[i],A[(i+1)%len(A)]} for i in range(len(A))):
-            return False
-        if not all(is_clique(G,S[0]&S[i]) for i in range(1,len(A))):
-            return False
-        if not all(is_clique(G,S[0]&link(G,A[i])) for i in range(1,len(A)-1)):
-            return False
-        if is_one_or_two_flat(G,S[0]) or not has_induced_square(G.subgraph(S[0])):
-            return True
-        elif not relax_S_zero:
-            return False
-        elif not enforce_extra_S_zero_condition:
-            return True
-        else: # check that for each vertex a in A[1:-2] there does not exist a subgraph of G of the same type(suspension/join) that contains a and nonadjacent vertices of S[0]
-            joinstructure=get_join(G.subgraph(S[0]))
-            if joinstructure is None:
-                raise RuntimeError("Unexpected S_zero configuration.")
-            A,B=joinstructure
-            if len(B)<len(A):
-                A,B=B,A
-            if len(A)<2 or len(B)==2:
-                raise RuntimeError("Unexpected S_zero configuration.")
-            if len(A)==2: #S[0] is suspension
-                for a in A[1:-2]:
-                    for b in [b for b in link(G,a) if not is_clique(G,link(G,b)&S[0])]:
-                        for c in [c for c in link(G,a) if c!=b and not is_clique(G,link(G,c)&S[0])]:
-                            if not is_clique(G,link(G,b)&link(G,c)&S[0]):
-                                return False
-                return True
-            else: # S[0] is a thick join that is not a suspension
-                for a in A[1:-2]:
-                    if not all(is_clique(G,S[0]&set(frozenset.union(*[j for j in J|K]))) for J in [J for J in maximal_joins(G,required_vertices={a},only_thick=True) if min(len(j) for j in J)>2]):
-                        return False
-                return True
-            
-    if only_triangles or only_squares: # only check for anticliques of 3 or 4 vertices, respectively, or both. This is much faster in the negative case because it is a less thorough search. 
-        if only_triangles and not only_squares:
-            anticlique_generator=triangles(Aux)
-        if only_squares and not only_triangles:
-            anticlique_generator=all_squares(Aux)
-        else:
-            anticlique_generator=itertools.chain.from_iterable([triangles(Aux),all_squares(Aux)])
-        for orderedA in anticlique_generator:
-            for i in range(len(orderedA)):
-                A=orderedA[i:]+orderedA[:i]
-                if validate_anticlique(A):
-                    if verbose:
-                        return list(A),[Aux[A[i]][A[(i+1)%len(A)]]['compliant_closure'] for i in range(len(A))]
-                    else:
-                        return list(A)
-        return None
-    # if we did not specify only to check 3- or 4-anticliques, then we try a different approach of iteratively extending an anticlique so that it does not yet violate any of the conditions on S[0], and hope that eventually it closes up, or else backtrack when we reach a point where closing up becomes impossible 
-                       
-    first_vert=next(iter(Aux))
-    the_anticlique=[first_vert,]
-    alternatives=[[v for v in Aux if v!=first_vert]]
-    the_compliant_sets=[]
-    while the_anticlique:
-        if len(the_anticlique)==1: # try to grow
-            this_vert=the_anticlique[0]
-            if relax_S_zero: # for experiments. This case may give wrong answers!!!!!
-                possible_next=[v for v in Aux[this_vert]]
-            else:
-                possible_next=[v for v in Aux[this_vert] if is_one_or_two_flat(G,Aux[this_vert][v]['compliant_closure']) or not has_induced_square(G.subgraph(Aux[this_vert][v]['compliant_closure']))]
-            if possible_next: # found ways to grow, loop
-                next_vert=possible_next[0]
-                the_anticlique.append(next_vert)
-                alternatives.append(possible_next[1:])
-                the_compliant_sets.append(Aux[this_vert][next_vert]['compliant_closure'])
-                continue
-            else: # no way to grow, backtrack
-                if not alternatives[0]:
-                    return None
-                the_anticlique=[alternatives[0].pop(),]
-                continue
-        if len(the_anticlique)>2: # first check if this anticlique is sufficient and we can stop
-            this_vert=the_anticlique[-1]
-            next_vert=the_anticlique[0]
-            if next_vert in Aux[this_vert]:
-                last_S=Aux[this_vert][next_vert]['compliant_closure']
-                if is_clique(G,last_S&the_compliant_sets[0]) and not any(a in last_S for a in the_anticlique[1:-1]):
-                    if verbose:
-                        return the_anticlique,the_compliant_sets+[last_S,]
-                    else:
-                        return the_anticlique
-        # previous check did not return, so keep working
-        this_vert=the_anticlique[-1]
-        possible_next=[v for v in Aux[this_vert]]
-        for a in the_anticlique: # extending by vertex in possible next would still be anticlique
-            possible_next={b for b in possible_next if b not in G[a]}
-        for S in the_compliant_sets: # vertices in possible_next do not already belong to other compliant sets
-            possible_next-=S
-        possible_next=[v for v in possible_next if is_clique(G,link(G,v)&the_compliant_sets[0])]
-        possible_next=[v for v in possible_next if Aux[v][this_vert]['compliant_closure']&set(the_anticlique)=={this_vert} and is_clique(G,Aux[v][this_vert]['compliant_closure']&the_compliant_sets[0])] # compliant closure of previous and next does not contain other members of anticlique and its intersection with S_0 is a clique
-        if possible_next and enforce_extra_S_zero_condition: # further filter possible_next to guarantee vertex v does not belong to a maximal join of G that intersects S_zero in incomplete set.
-            S_zero=the_compliant_sets[0]
-            if is_one_or_two_flat(G,S_zero) or not has_induced_square(G.subgraph(S_zero)):
-                pass
-            else:
-                joinstructure=get_join(G.subgraph(S_zero))
-                if joinstructure is None:
-                    raise RuntimeError("Unexpected S_zero configuration.")
-                A,B=joinstructure
-                if len(B)<len(A):
-                    A,B=B,A
-                if len(A)<2 or len(B)==2:
-                    raise RuntimeError("Unexpected S_zero configuration.")
-                if len(A)==2:
-                    furtherpossibilities=[]
-                    for v in possible_next: # discard v is there is a suspension in G containing v and an incomplete subset of S_zero. The way this could arise consistent with other restrictions is if there exist nonadjacent a and b in link(v), at most one of which is in S_zero, such that |link(a)&link(b)&S_zero|>1
-                        for b in [b for b in link(G,v) if not is_clique(G,link(G,b)&S_zero)]:
-                            for c in [c for c in link(G,v) if c!=b and not is_clique(G,link(G,c)&S_zero)]:
-                                if b in S_zero and c in S_zero:
-                                    continue
-                                if is_clique(G,link(G,b)&link(G,c)&S_zero):
-                                    continue
-                                break
-                            else:
-                                continue
-                            break
-                        else: # did not find problematic suspension
-                            furtherpossibilities.append(v)
-                    possible_next=furtherpossibilities
-                else:
-                    possible_next=[v for v in possible_next if all(is_clique(G,S_zero&set(frozenset.union(*[j for j in J]))) for J in [J for J in maximal_joins(G,required_vertices={v},only_thick=True) if min(len(j) for j in J)>2])]
-        if possible_next:
-            next_vert=possible_next.pop()
-            the_anticlique.append(next_vert)
-            alternatives.append(possible_next)
-            the_compliant_sets.append(Aux[this_vert][next_vert]['compliant_closure'])
-            continue
-        else:
-            if len(the_anticlique)==1:
-                if alternatives[0]:
-                    new_first=alternatives[0].pop()
-                    the_anticlique=[new_first,]
-                    continue
-                else:
-                    return None
-            else:
-                while the_anticlique and not alternatives[-1]:
-                    alternatives.pop()
-                    the_anticlique.pop()
-                    if the_compliant_sets:
-                        the_compliant_sets.pop()
-                if len(the_anticlique)==1:
-                    next_vert=alternatives[-1].pop()
-                    the_anticlique[0]=next_vert
-                    continue
-                elif len(the_anticlique)>1:
-                    next_vert=alternatives[-1].pop()
-                    prev_vert=the_anticlique[-2]
-                    the_anticlique[-1]=next_vert
-                    if the_compliant_sets:
-                        the_compliant_sets[-1]=Aux[prev_vert][next_vert]['compliant_closure']
-                    else:
-                        the_compliant_sets.append(Aux[prev_vert][next_vert]['compliant_closure'])
-                    continue
-    return None
-        
-        
-def compliant_cycle2(G,verbose=False,try_subordinate_joins=0):
+
+
+def compliant_cycle(G,verbose=False,try_subordinate_joins=1,enforce_extra_S_condition=True):
     """
-    Find a compliant set S and a path A satisfying theorem 8.14
+    Find a compliant set S and an induced path A satisfying theorem 8.14. Specifically, need that A intersects S only at its endpoints and for every interior vertex a in A, link(a)\cap S is a clique. We also need that there does not exist S' that is in the same QI orbit as S, intersects S in incomplete set, and contains some vertex of A. When S is hyperbolic or square the S' condition is automatic.  
+    
+    Option try_subordinate_joins restricts choices of S to make it easier to check for S'. 
     try_subordinate_joins:
     0: Only consider S that are square-free, square, or maximal thick join subgraphs.
     1: Consider all compliant sets S covered by case 0 or case 2. 
     2: Only consider S that are thick joins not covered in case 0.
+    Option 0 is faster than 1. Option 2 is for if 0 already failed, so we don't repeat work by trying 1. 
+
+    If enforce_extra_S_condition=False do not check for S' at all. This is for experimentation, output may not satisfy the conditions of the theorem. 
     """
-    def get_path_avoiding_forbidden(S,forbidden):
-        the_subgraph=G.subgraph(set(G)-forbidden)
-        for C in nx.connected_components(the_subgraph):
-            C=set(C)
-            SC={s for s in S if link(G,s)&C}
-            if is_clique(G,SC):
-                continue
-            for x,y in itertools.combinations(SC,2):
-                if not is_clique(G,{x,y}):
-                    the_path=nx.shortest_path(G.subgraph(C|{x,y}),x,y)
-                    return the_path
-        return None
+    compliant_all=compliant_subsets(G)
     compliant_hyperbolic=set()
     compliant_square=set()
     compliant_max_join_suspension=set()
@@ -1907,7 +1733,7 @@ def compliant_cycle2(G,verbose=False,try_subordinate_joins=0):
     compliant_other=set()
     RIC=MPRG_fundamental_domain(G)
     neighbor_types=MPRG_neighbor_types(G,RIC)
-    for S in compliant_subsets(G):
+    for S in compliant_all: # sort the compliant sets
         if not has_induced_square(G,S):
             compliant_hyperbolic.add(S)
         elif is_square(G,S):
@@ -1933,35 +1759,164 @@ def compliant_cycle2(G,verbose=False,try_subordinate_joins=0):
                     compliant_max_join_non_suspension.add(J)
                 else:
                     compliant_non_max_join_non_suspension.add(J)
-    if try_subordinate_joins in {0,1}:
+    def get_path_avoiding_forbidden(S,forbidden):
+        bridges=[T for T in compliant_all if is_clique(G,S&T)]
+        for first,last in ((x,y) for x,y in itertools.combinations(S,2) if not is_clique(G,{x,y})):
+            # case that first and last edges both bridges
+            for A in [T for T in bridges if first in T]:
+                for B in [T for T in bridges if last in T and T!=A]: # A!=B since otherwise we have only P is a 2-anticlique
+                    for a in [a for a in A if a!=first and a not in forbidden]:
+                        for b in [b for b in B if b!=last and b not in forbidden]:
+                            auxgraph=(G.subgraph(set(G)-forbidden)).copy()
+                            for T in [T for T in bridges if T!=A and T!=B]:
+                                for c,d in itertools.combinations(set(T),2):
+                                    if c in auxgraph and d in auxgraph:
+                                        if (c,d) not in auxgraph.edges():
+                                            auxgraph.add_edge(c,d,bridges=[T,])
+                                        elif 'bridges' in auxgraph[c][d]:
+                                            auxgraph[c][d]['bridges'].append(T)
+                            try:
+                                the_path=nx.shortest_path(auxgraph,a,b)
+                                auxgraph.add_edge(first,a,bridges=[A,])
+                                auxgraph.add_edge(b,last,bridges=[B,])
+                                whole_path=[first,]+the_path+[last,] # whole_path contains at least two bridge edges
+                                return whole_path,auxgraph
+                            except nx.NetworkXNoPath:
+                                continue
+            # case that only first edge is a bridge
+            for A in [T for T in bridges if first in T]:
+                for a in [a for a in A if a!=first and a not in forbidden]:
+                    auxgraph=(G.subgraph((set(G)-forbidden)|set([last,]))).copy()
+                    for T in [T for T in bridges if T!=A]:
+                        for c,d in itertools.combinations(set(T),2):
+                            if c in auxgraph and d in auxgraph and c!=last and d!=last:
+                                if (c,d) not in auxgraph.edges():
+                                    auxgraph.add_edge(c,d,bridges=[T,])
+                                elif 'bridges' in auxgraph[c][d]:
+                                    auxgraph[c][d]['bridges'].append(T)
+                    try:
+                        the_path=nx.shortest_path(auxgraph,a,last) # by construction, the_path ends with a G edge
+                        whole_path=[first,]+the_path # whole_path contains at least one bridge edge and at least on G edge
+                        auxgraph.add_edge(first,a,bridges=[A,])
+                        return whole_path,auxgraph
+                    except nx.NetworkXNoPath:
+                        continue
+            # case that only last edge is a bridge
+            for B in [T for T in bridges if last in T]:
+                for b in [b for b in B if b!=last and b not in forbidden]:
+                    auxgraph=(G.subgraph((set(G)-forbidden)|set([first,]))).copy()
+                    for T in [T for T in bridges if T!=B]:
+                        for c,d in itertools.combinations(set(T),2):
+                            if c in auxgraph and d in auxgraph and c!=first and d!=first:
+                                if (c,d) not in auxgraph.edges():
+                                    auxgraph.add_edge(c,d,bridges=[T,])
+                                elif 'bridges' in auxgraph[c][d]:
+                                    auxgraph[c][d]['bridges'].append(T)
+                    try:
+                        the_path=nx.shortest_path(auxgraph,first,b)
+                        whole_path=the_path+[last,]
+                        auxgraph.add_edge(b,last,bridges=[B,])
+                        return whole_path,auxgraph
+                    except nx.NetworkXNoPath:
+                        continue
+            # case that first and last edges not bridges
+            auxgraph=(G.subgraph((set(G)-forbidden)|{first,last})).copy()
+            for T in bridges:
+                for c,d in itertools.combinations(set(T),2):
+                    if c in auxgraph and d in auxgraph and c!=first and d!=first and c!=last and d!=last:
+                        if (c,d) not in auxgraph.edges():
+                            auxgraph.add_edge(c,d,bridges=[T,])
+                        elif 'bridges' in auxgraph[c][d]:
+                            auxgraph[c][d]['bridges'].append(T)
+            try:
+                the_path=nx.shortest_path(auxgraph,first,last)
+                assert(len(the_path)>3) # should not be possible for first and last to have common neighbor in auxgraph; such a vertex would have been forbidden for having link intersecting S_0 in a nonclique
+                return the_path,auxgraph
+            except nx.NetworkXNoPath:
+                continue
+        return None, None
+    if try_subordinate_joins in {0,1}: # consider cases that S is square, hyperbolic, or max join
         for S in compliant_hyperbolic|compliant_square:
             forbidden=set(S)|{v for v in G if not is_clique(G,link(G,v)&S)}
-            the_path=get_path_avoiding_forbidden(S,forbidden)
+            the_path,auxgraph=get_path_avoiding_forbidden(S,forbidden)
             if the_path is not None:
-                return S,the_path
+                return S,the_path,auxgraph
         for J in compliant_max_join_suspension|compliant_max_join_non_suspension:
             A,B=J
             if len(A)>len(B):
                 A,B=B,A
             S=set(A)|set(B)
-            problem_subgraphs=[]
-            for K in [K for K in RIC if K!=J]:
-                X,Y=K
-                if len(X)>len(Y):
-                    X,Y=Y,X
-                if (len(A)==2 and len(X)==2) or (len(A)>2 and len(X)>2):
-                    if neighbor_types[J]==neighbor_types[K] and not is_clique(G,(set(A)|set(B))&(set(X)|set(Y))):
-                        problem_subgraphs.append(G.subgraph(set(X)|set(Y)))
-            forbidden=set(S)|(set()).union(*[set(H) for H in problem_subgraphs])|{v for v in G if not is_clique(G,link(G,v)&S)}
-            the_path=get_path_avoiding_forbidden(S,forbidden)
+            Snbhd={v for v in G if (v not in S) and link(G,v)&S} 
+            forbidden=set(S)|{v for v in G if not is_clique(G,link(G,v)&S)}
+            if enforce_extra_S_condition:
+                seed_generator=(K for K in RIC if K!=J)
+                while True:
+                    try:
+                        K=next(seed_generator)
+                    except StopIteration:
+                        break
+                    X,Y=K
+                    if len(X)>len(Y):
+                        X,Y=Y,X
+                    Sprime=set(X)|set(Y)
+                    if Sprime<=forbidden:
+                        continue
+                    if (len(A)==2 and len(X)==2) or (len(A)>2 and len(X)>2):
+                        if neighbor_types[J]==neighbor_types[K] and not is_clique(G,S & Sprime):
+                            forbidden|=Sprime
+            the_path,auxgraph=get_path_avoiding_forbidden(S,forbidden)
             if the_path is not None:
-                return S,the_path
-    if try_subordinate_joins in {1,2}: # this will be slower because we have to enumerate and check potential problem subgraphs to be avoided
-        NotImplemented
-        for J in compliant_non_max_join_suspension:
-            pass
-        for J in compliant_non_max_join_non_suspension:
-            pass
+                return S,the_path,auxgraph
+    if try_subordinate_joins in {1,2}: # consider cases that S is a thick join but not maximal 
+        for J in compliant_non_max_join_suspension|compliant_non_max_join_non_suspension:
+            A,B=J
+            if len(A)>len(B):
+                A,B=B,A
+            S=set(A)|set(B)
+            Snbhd={v for v in G if (v not in S) and link(G,v)&S} 
+            max_joins_containing_S={frozenset({X,Y}) for X,Y in RIC if S<=set(X)|set(Y)}
+            S_is_suspension=bool(len(A)==2)
+            forbidden=set(S)|{v for v in G if not is_clique(G,link(G,v)&S)}
+            if enforce_extra_S_condition:
+                # enumerate subgraphs that intersect S in a nonclique and could conceivably by in same QI orbit as S
+                seed_generator=itertools.chain.from_iterable([itertools.combinations(A,2),itertools.combinations(B,2)])
+                while True:
+                    try:
+                        nonclique_in_S_intersection=next(seed_generator)
+                    except StopIteration:
+                        break
+                    x1,x2=nonclique_in_S_intersection
+                    L=link(G,x1)&link(G,x2)
+                    if not S_is_suspension:
+                        possible_Y_factors=powerset(L,minsize=3)
+                    else:
+                        possible_Y_factors=powerset(L,minsize=2)
+                    for Y in possible_Y_factors:
+                        maximal_complementary_factor=set.intersection(*[link(G,y) for y in Y])
+                        if not S_is_suspension:
+                            possible_X_factors=powerset(maximal_complementary_factor-{x1,x2}, minsize=1)
+                        else:
+                            if len(Y)==2:
+                                possible_X_factors=powerset(maximal_complementary_factor-{x1,x2}, minsize=1)
+                            else:
+                                possible_X_factors=[set(),]
+                        for Xprime in possible_X_factors:
+                            X=set(Xprime)|{x1,x2}
+                            if len(X)>len(Y):
+                                X,Y=Y,X
+                            Sprime=set(X)|set(Y)
+                            # Sprime is a thick join of the same type suspension/nonsuspension as S. Now further checks to exclude it if it cannot be in same QI orbit as S
+                            biggerX=set.intersection(*[link(G,y) for y in Y])
+                            biggerY=set.intersection(*[link(G,x) for x in X])
+                            if X==biggerX and Y==biggerY: # this X*Y is a maximal join
+                                continue
+                            ###### consider if the set of maximal joins containing S is similar to the set of maximal joins containing Sprime
+                            max_joins_containing_Sprime={frozenset({U,V}) for U,V in RIC if Sprime<=set(U)|set(V)}
+                            if {neighbor_types[J] for J in max_joins_containing_S}=={neighbor_types[K] for K in max_joins_containing_Sprime}:
+                                forbidden|=Sprime
+            the_path,auxgraph=get_path_avoiding_forbidden(S,forbidden)
+            if the_path is not None:
+                return S,the_path,auxgraph
     #for S in compliant_other: # don't know what to do with these
     return None
 
@@ -2187,7 +2142,7 @@ def MPRG_fundamental_domain(G):
 
 def MPRG_neighbor_types(G,F):
     """
-    Given a triangle-free graph G and its MPRG_fundamental_domain F, return a dict whose keys are vertices of F, and whose values are sets of tuples (neighbor,intersection), where neighbor in {'suspension','non-suspension'} and intersection in {'square','suspension','non-suspension'}, describing the types of neighbors of J in F and their intersection with J. 
+    Given a triangle-free graph G and its MPRG_fundamental_domain F, return a dict whose keys are vertices of F, and whose values are frozensets of tuples (neighbor,intersection), where neighbor in {'suspension','non-suspension'} and intersection in {'square','suspension','non-suspension'}, describing the types of neighbors of J in F and their intersection with J. 
     """
     result=dict()
     for J in F:
@@ -2216,6 +2171,8 @@ def MPRG_neighbor_types(G,F):
             else:
                 intersectiontype='non-suspension'
             result[J].add((neighbortype,intersectiontype))
+    for J in result:
+        result[J]=frozenset(result[J])
     return result
 
 def MPRG_stab(F,v):
@@ -2249,7 +2206,7 @@ def edges_not_in_any_thick_join(G,precomputed_MPRG_fundamtenal_domain=None):
             yield a,b
     
 
-def get_MPRG_ladder(G,rs=None,verbose=False,small_first=False, try_hard=False):
+def get_MPRG_ladder(G,rs=None,ss=None,verbose=False,small_first=False, try_hard=False):
     """
     Search for triple r,s,Delta such that r and s are vertices of G and Delta is a subset of the fundamental domain of the MPRG of the RACG defined by G such that <r,s>.Delta is a thick ladder.
 
@@ -2260,34 +2217,51 @@ def get_MPRG_ladder(G,rs=None,verbose=False,small_first=False, try_hard=False):
     if is_join(G):
         return None
     F=MPRG_fundamental_domain(G)
+    if not nx.is_connected(F):
+        raise ValueError('MPRG fundamental domain is not connected.')
     if len(F)<5 or nx.is_tree(F):
         return None
-    components=[C for C in nx.connected_components(F)]
-    if rs is not None:
-        orderedvertices=[v for v in rs]+[v for v in set(G)-set(rs)]
-        indicestocheck=[x for x in range(min([len(rs),len(G)-1]))]
+    vertices_with_large_fixed_sets=[v for v in G if diameter_at_least_three(F,MPRG_fixed(F,v))]
+    if not try_hard:
+        vertices_with_large_fixed_set_not_star_separated=[v for v in vertices_with_large_fixed_sets if not badly_star_separated(F,MPRG_fixed(F,v))]
+    if rs is None:
+        assert(ss is None)
+        if try_hard:
+            orderedvertices=vertices_with_large_fixed_sets+[v for v in set(G)-set(vertices_with_large_fixed_sets)]
+            possible_r_indices=[i for i in range(len(vertices_with_large_fixed_sets))]
+            possible_s_indices=[i for i in range(len(vertices_with_large_fixed_sets))]
+        else:
+            orderedvertices=vertices_with_large_fixed_set_not_star_separated+[v for v in set(G)-set(vertices_with_large_fixed_set_not_star_separated)]
+            possible_r_indices=[i for i in range(len(vertices_with_large_fixed_set_not_star_separated))]
+            possible_s_indices=[i for i in range(len(vertices_with_large_fixed_set_not_star_separated))]
     else:
-        orderedvertices=[v for v in G]
-        indicestocheck=[i for i in range(len(G)-1)]
-    for i in indicestocheck:
+        if try_hard:
+            allowed_r=list(set(vertices_with_large_fixed_sets)&set(rs))
+            disallowed_r=list(set(vertices_with_large_fixed_sets)-set(rs))
+            orderedvertices=allowed_r+disallowed_r+[v for v in set(G)-set(vertices_with_large_fixed_sets)]
+            possible_r_indices=[i for i in range(len(allowed_r))]
+            if ss is None:
+                possible_s_indices=[i for i in range(len(vertices_with_large_fixed_sets))]
+            else:
+                possible_s_indices=[i for i in range(len(vertices_with_large_fixed_sets)) if vertices_with_large_fixed_sets[i] in ss]
+        else:
+            allowed_r=list(set(vertices_with_large_fixed_set_not_star_separated)&set(rs))
+            disallowed_r=list(set(vertices_with_large_fixed_set_not_star_separated)-set(rs))
+            orderedvertices=allowed_r+disallowed_r+[v for v in set(G)-set(vertices_with_large_fixed_set_not_star_separated)]
+            possible_r_indices=[i for i in range(len(allowed_r))]
+            if ss is None:
+                possible_s_indices=[i for i in range(len(vertices_with_large_fixed_set_not_star_separated))]
+            else:
+                possible_s_indices=[i for i in range(len(vertices_with_large_fixed_set_not_star_separated)) if vertices_with_large_fixed_set_not_star_separated[i] in ss]
+    for i in possible_r_indices:
         r=orderedvertices[i]
         Rfix=MPRG_fixed(F,r)
-        Ractivecomponents=[C for C in components if C&Rfix]
-        if len(Ractivecomponents)>1:
-            continue
-        Ractivecomponent=Ractivecomponents[0]
-        if not diameter_at_least_three(F,Rfix):
-            continue
-        for j in range(i+1,len(orderedvertices)):
+        for j in [j for j in possible_s_indices if j>i]:
             s=orderedvertices[j]
             if r in G[s]:
                continue
             Sfix=MPRG_fixed(F,s)
             if Sfix&Rfix: # if r and s are contained in a common join
-                continue
-            if not Sfix<=Ractivecomponent:
-                continue
-            if not diameter_at_least_three(F,Sfix):
                 continue
             if verbose:
                 print("Trying r="+str(r)+" and s="+str(s))
@@ -2297,9 +2271,9 @@ def get_MPRG_ladder(G,rs=None,verbose=False,small_first=False, try_hard=False):
                 Rs_to_try=[Rfix,]
             for R in Rs_to_try:
                 R=set(R)
-                if not diameter_at_least_three(F,R):
+                if try_hard and not diameter_at_least_three(F,R): # if try_hard=False already checked diameter for R=Rfix
                     continue
-                if badly_star_separated(F,R):
+                if try_hard and badly_star_separated(F,R): # if try_hard=False already checked star separation for R=Rfix
                     continue
                 if try_hard:
                     Ss_to_try=powerset(Sfix,minsize=2,small_first=small_first)
@@ -2307,13 +2281,13 @@ def get_MPRG_ladder(G,rs=None,verbose=False,small_first=False, try_hard=False):
                     Ss_to_try=[Sfix,]
                 for S in Ss_to_try:
                     S=set(S)
-                    if not diameter_at_least_three(F,S):
+                    if try_hard and not diameter_at_least_three(F,S):
                         continue
-                    if badly_star_separated(F,S):
+                    if try_hard and not badly_star_separated(F,S):
                         continue
                     if verbose:
                         print("Trying fixed sets "+str(R)+" and "+str(S))
-                    Delta=find_Delta_for_MPRG_ladder_subtractive(F,r,s,R,S,(Rfix-R)|(Sfix-S)|(set(F)-Ractivecomponent),verbose=(verbose==2))
+                    Delta=find_Delta_for_MPRG_ladder_subtractive(F,r,s,R,S,(Rfix-R)|(Sfix-S)|(set([])),verbose=(verbose==2))
                     if Delta is not None:
                         return r,s,Delta
     return None
@@ -2343,14 +2317,29 @@ def badly_star_separated(F,R,verbose=False):
     return False
         
     
+def all_in_one_component(thegraph,input_vertices):
+    active_components=[C for C in nx.connected_components(thegraph) if set(C)&set(input_vertices)]
+    return len(active_components)<=1
 
 def diameter_at_least_three(thegraph,input_vertex_set):
     """
     Return True if input_vertex_set has diameter at least three in thegraph.
-    Error if input_vertex_set is not contained in a single component of thegraph. 
+    Error if input_vertex_set is not contained in a single component of thegraph.
+
+    >>> diameter_at_least_three(cycle_graph(5),{0,1,2,3,4})
+    False
+    >>> diameter_at_least_three(cycle_graph(6), {0,3})
+    True
     """
-    for v,w in itertools.combinations(input_vertex_set,2):
-        if nx.shortest_path_length(thegraph,v,w)>=3:
+    vertices=set(input_vertex_set)
+    if not vertices:
+        return False
+    if not all_in_one_component(thegraph,vertices):
+        raise ValueError('Input vertices not in common connected component.')
+    for v in vertices:
+        if vertices<=two_ball(thegraph,v):
+            continue
+        else:
             return True
     return False
 
@@ -2495,40 +2484,6 @@ def check_Delta_for_MPRG_ladder(F,r,s,R,S,excluded,Delta):
 
                                 
 # ----------more CFS stuff
-def get_CFS_spanning_subgraph(G,max_edges_to_remove=1):
-    if not is_CFS(G):
-        raise ValueError
-    for E in range(max(len(G)-1,len(G.edges())-max_edges_to_remove),len(G.edges())):
-        for edges in itertools.combinations(G.edges(),E):
-            H=G.edge_subgraph(edges)
-            if len(H)<len(G):
-                continue
-            if is_CFS(H):
-                return H
-    return None
-
-def is_minCFS_hierarchy(G):
-    return bool(get_minCFS_hierarchy(G))
-
-def get_minCFS_hierarchy(G):
-    T=get_iterated_construction(G,max_cone_size=2,only_minCFS=True)
-    if is_induced_square(G,G):
-        return [G,]
-    if len(G)<=4:
-        return list([])
-    if not is_minimal_CFS(G):
-        return list([])
-    for v in G:
-        if len(G[v])!=2:
-            continue
-        H=G.subgraph([w for w in G if w!=v])
-        if not is_minimal_CFS(H):
-            continue
-        subhierarchy=get_minCFS_hierarchy(H)
-        if subhierarchy:
-            return [G,]+subhierarchy
-    return list([])
-
 
 def get_iterated_construction(G,max_cone_size=float('inf'),only_cones=True,prefer_large_cones=False,additional_condition=None):
     """
@@ -2617,18 +2572,18 @@ def square_graph(G):
 def diagonal_graph(G):
     """
     Graph with one vertex for each diagonal pair of vertices that are the diagonal of an induced square of G, and an edge between pairs when they are the vertices of an induced square.
-    Vertices are given as a tuple (a,b) with a<b.
+    Vertices are given as a frozenset({a,b}).
     """
     DG=nx.Graph()
     if len(G)<4:
         return DG
     for S in induced_squares(G):
-        DG.add_edge((S[0],S[2]),(S[1],S[3]))
+        DG.add_edge(frozenset({S[0],S[2]}),frozenset({S[1],S[3]}))
     return DG
 
 def diagonals(G):
     """
-    Return the set of tuples (a,b) of vertices of G such that a<b and {a,b} is a diagonal in some induced square.
+    Return the set of pairs frozenset({a,b}) of vertices of G such that {a,b} is a diagonal in some induced square.
     """
     DG=diagonal_graph(G)
     return {v for v in DG}
@@ -2644,10 +2599,93 @@ def graph_from_diagonals(D):
     # reconstruct the smallest graph that has D as its diagonal graph. 
     G=nx.Graph()
     for A,B in D.edges():
+        a=tuple(A)
+        b=tuple(B)
         for i,j in itertools.combinations_with_replacement({0,1},2):
-            G.add_edge(A[i],B[j])
+            G.add_edge(a[i],b[j])
     return G
-        
+
+
+
+#-------------- unfolding
+
+
+def find_places_to_unfold(G):
+    """
+    Given a triangle-free graph G, yield (A,B,C,D,E,F) such that E*F is a maximal thick join that separates G, D is a union of its complementary components, and A, B, C is a partition of E such that vertices of A only have neighbors in D and F, vertices of B have no neighbors in D, and a singleton set of vertices C with neighbors in both D and D complement. 
+    """
+    for E,F in get_separating_maximal_thick_joins(G):
+        therest=G.subgraph(set(G)-E-F)
+        thefactors=[E,F]
+        comps=[thecomps for thecomps in nx.connected_components(therest)]
+        for union_of_components in powerset(comps,minsize=1,maxsize=len(comps)-1):
+            D=set.union(*[comp for comp in union_of_components])
+            for i in range(2):
+                factor=thefactors[i]
+                Aplus={v for v in factor if set(D)&set(G[v])}
+                Bplus={v for v in factor if (set(therest)-set(D))&set(G[v])}
+                C=Aplus&Bplus
+                A=Aplus-C
+                B=factor-A-C
+                if len(C)==1 and A and B:
+                    yield(frozenset(A),frozenset(B),frozenset(C),frozenset(D),frozenset(thefactors[i]),frozenset(thefactors[(i+1)%2]))
+
+def has_unfoldings(G):
+    """
+    Given a triangle-free graph G, determine if it has any possible unfoldings according to Theorem....
+    """
+    pu=find_places_to_unfold(G)
+    try:
+        next(pu)
+    except StopIteration:
+        return False
+    return True
+                
+def unfold_once(G,A,B,C,D,E,F):
+    """
+    Given a triangle-free graph G and the output of find_places_to_unfold, perform the unfolding, changing G into a graph G' with one additional vertex, with W(G) and W(G') quasiisometric.
+    """
+    U=G.copy()
+    newvertex=0
+    while newvertex in U:
+        newvertex+=1
+    U.add_node(newvertex)
+    for f in F:
+        U.add_edge(newvertex,f)
+    assert(len(C)==1)
+    c=next(iter(C))
+    for d in D:
+        if c in U[d]:
+            U.remove_edge(c,d)
+            U.add_edge(newvertex,d)
+    return U
+
+def maximal_unfolding(G):
+    """
+    Find places to unfold and then unfold, iteratively, until no more place to unfold are found.
+    """
+    # Don't know anything about what happens if different unfolding sequences are chosen.
+    current_graph=G.copy()
+    while True:
+        places=find_places_to_unfold(current_graph)
+        try:
+            place=next(places)
+            current_graph=unfold_once(current_graph,*place)
+        except StopIteration:
+            break
+    return current_graph
+            
+def all_unfoldings(G):
+    for p in find_places_to_unfold(G):
+        H=unfold_once(G,*p)
+        yield H
+        for K in all_unfoldings(H):
+            yield K
+
+
+
+
+            
 
 #-------------- general graph structure
 def bipartition(G):
@@ -3032,20 +3070,7 @@ def are_diagonal(G,v,w):
         return False
     return True
 
-def diagonal_pairs(G,S):
-    """
-    Return the diagonal pairs of an induced square.
-    """
-    a,b,c,d=tuple(S)
-    if a in G[b]:
-        if a in G[c]:
-            return ((a,d),(b,c))
-        else:
-            return ((a,c),(b,d))
-    else:
-        return ((a,b),(c,d))
 
-    
 
 def is_triangle(G,S):
     """
@@ -3085,11 +3110,16 @@ def twins(G,v):
     """
     Return the set of vertices that have the same link as v, including v.
 
-    >>> G=double(nx.path_graph(4)); twins(G,(1,0))
-    {(1, 0), (1, 1)}
+    >>> G=double(nx.path_graph(4)); twins(G,(1,0))=={(1, 0), (1, 1)}
+    True
+    >>> G.add_node('a');G.add_node('b'); twins(G,'a')=={'a','b'}
+    True
     """
     L=link(G,v)
-    return {w for w in G if link(G,w)==L}
+    if L:
+        return set([v])|{w for w in distance_two(G,v) if link(G,w)==L}
+    else:
+        return {w for w in G if link(G,w)==L}
 
 def twin_module(G,L):
     """
@@ -3126,6 +3156,11 @@ def distance_two(G,v):
     """
     return (set().union(*[set(G[w]) for w in G[v]]))-star(G,v)
 
+def two_ball(G,v):
+    """
+    Return the set of vertices in the closed ball of radius 2 about v in G.
+    """
+    return star(G,v).union(*[set(G[w]) for w in G[v]])
 
 def get_separating_maximal_thick_joins(G):
     """
@@ -3178,75 +3213,37 @@ def has_separating_star(G):
         
 
 
-def find_places_to_unfold(G):
-    """
-    Given a triangle-free graph G, yield (A,B,C,D,E,F) such that E*F is a maximal thick join that separates G, D is a union of its complementary components, and A, B, C is a partition of E such that vertices of A only have neighbors in D and F, vertices of B have no neighbors in D, and a singleton set of vertices C with neighbors in both D and D complement. 
-    """
-    for E,F in get_separating_maximal_thick_joins(G):
-        therest=G.subgraph(set(G)-E-F)
-        thefactors=[E,F]
-        comps=[thecomps for thecomps in nx.connected_components(therest)]
-        for union_of_components in powerset(comps,minsize=1,maxsize=len(comps)-1):
-            D=set.union(*[comp for comp in union_of_components])
-            for i in range(2):
-                factor=thefactors[i]
-                Aplus={v for v in factor if set(D)&set(G[v])}
-                Bplus={v for v in factor if (set(therest)-set(D))&set(G[v])}
-                C=Aplus&Bplus
-                A=Aplus-C
-                B=factor-A-C
-                if len(C)==1 and A and B:
-                    yield(frozenset(A),frozenset(B),frozenset(C),frozenset(D),frozenset(thefactors[i]),frozenset(thefactors[(i+1)%2]))
 
-def has_unfoldings(G):
+def vertex_equivalence_classes(G):
     """
-    Given a triangle-free graph G, determine if it has any possible unfoldings according to Theorem....
+    Return sets of vertices that are in same Aut(G) orbit.
     """
-    pu=find_places_to_unfold(G)
-    try:
-        next(pu)
-    except StopIteration:
-        return False
-    return True
-                
-def unfold_once(G,A,B,C,D,E,F):
-    """
-    Given a triangle-free graph G and the output of find_places_to_unfold, perform the unfolding, changing G into a graph G' with one additional vertex, with W(G) and W(G') quasiisometric.
-    """
-    U=G.copy()
-    newvertex=0
-    while newvertex in U:
-        newvertex+=1
-    U.add_node(newvertex)
-    for f in F:
-        U.add_edge(newvertex,f)
-    assert(len(C)==1)
-    c=next(iter(C))
-    for d in D:
-        if c in U[d]:
-            U.remove_edge(c,d)
-            U.add_edge(newvertex,d)
-    return U
+    action_graph=nx.Graph()
+    for v in G:
+        action_graph.add_node(v)
+    for A in nx.algorithms.isomorphism.vf2pp_all_isomorphisms(G,G):
+        for v in G:
+            action_graph.add_edge(v,A[v])
+    return [C for C in nx.connected_components(action_graph)]
 
-def maximal_unfolding(G):
+def vertex_equivalence_classes_stabilizing_set(G,V):
     """
-    Find places to unfold and then unfold, iteratively, until no more place to unfold are found.
+    Return sets of vertices that are in same orbit under automorphisms of G that fix set V pointwise.
     """
-    # Don't know anything about what happens if different unfolding sequences are chosen.
-    current_graph=G.copy()
-    while True:
-        places=find_places_to_unfold(current_graph)
-        try:
-            place=next(places)
-            current_graph=unfold_once(current_graph,*place)
-        except StopIteration:
-            break
-    return current_graph
-            
-            
+    action_graph=nx.Graph()
+    for w in G:
+        action_graph.add_node(w)
+    for A in nx.algorithms.isomorphism.vf2pp_all_isomorphisms(G,G):
+        if all(A[v]==v for v in V):
+            for w in G:
+                action_graph.add_edge(w,A[w])
+    return [C for C in nx.connected_components(action_graph)]
 
-            
-        
+
+
+
+
+
 #----------- near doubles and coarse near doubles
 
 def is_near_double(G,precomputed_twin_module_graph=None):
@@ -3307,11 +3304,7 @@ def is_near_double(G,precomputed_twin_module_graph=None):
             return True
     return False
 
-
-def is_coarse_near_double(G,precomputed_twin_module_graph=None):
-    """
-    Same as near_double except only considers unclonable singleton twin modules instead of all odd twin modules. All other modules can be turned into even modules by vertex cloning.
-    """
+def Einzelkinder(G,precomputed_twin_module_graph=None):
     if precomputed_twin_module_graph is None:
         Twins=twin_module_graph(G)
     else:
@@ -3322,6 +3315,17 @@ def is_coarse_near_double(G,precomputed_twin_module_graph=None):
             v=next(iter(S))
             if not vertex_is_clonable(G,v):
                 unclonable_singletons.add(S)
+    return unclonable_singletons
+
+def is_coarse_near_double(G,precomputed_twin_module_graph=None):
+    """
+    Same as near_double except only considers unclonable singleton twin modules instead of all odd twin modules. All other modules can be turned into even modules by vertex cloning.
+    """
+    if precomputed_twin_module_graph is None:
+        Twins=twin_module_graph(G)
+    else:
+        Twins=precomputed_twin_module_graph
+    unclonable_singletons=Einzelkinder(G,Twins)
     if len(unclonable_singletons)<=1:
         return True
     elif len(unclonable_singletons)==2:
@@ -3339,17 +3343,23 @@ def is_coarse_near_double(G,precomputed_twin_module_graph=None):
             return True
     return False
 
-def vertex_is_satellite_of(G,v):
+def satellites(G,v):
+    """
+    Return set of satellites of v.
+    """
+    return {w for w in distance_two(G,v) if link(G,w)<=link(G,v)}
+
+def vertices_of_which_satellite(G,v):
     """
     Return the set of vertices of G of which v is a satellite.
     """
-    return {w for w in G if link(G,v)<=link(G,w) and w!=v}
+    return {w for w in distance_two(G,v) if link(G,v)<=link(G,w)}
                         
 def vertex_is_clonable(G,v):
     """
     Given a vertex v in a triangle-free graph G, decide if v is clonable. 
     """
-    return len(vertex_is_satellite_of(G,v))>=2
+    return len(vertices_of_which_satellite(G,v))>=2
 
 def clonable_vertices(G,twin_free=False):
     """
@@ -3378,6 +3388,39 @@ def clone_vertex(G,v):
         H.add_edge(new_vertex,w)
     return H
 
+def canonical_blowup(G):
+    """
+    Replace G with a graph such that every twin module has 1, 2, or 4 vertices, by cloning and uncloning without changing QI type of RACG. 
+    """
+    return blowup(reweighted_twin_module_graph(G))
+
+def reweighted_twin_module_graph(G):
+    Gemini=twin_module_graph(G)
+    auxgraph=nx.Graph()
+    for M in (v for v in Gemini if Gemini.nodes[v]['weight']==1):
+        v=next(iter(M))
+        if vertex_is_clonable(G,v):
+            auxgraph.add_node(M,weight=2)
+        else:
+            auxgraph.add_node(M,weight=1)
+    for M in (v for v in Gemini if Gemini.nodes[v]['weight']==2):
+        auxgraph.add_node(M,weight=2)
+    for M in (v for v in Gemini if Gemini.nodes[v]['weight']>=4):
+        auxgraph.add_node(M,weight=4)
+    for M in (v for v in Gemini if Gemini.nodes[v]['weight']==3):
+        v=next(iter(M))
+        if len(vertices_of_which_satellite(G,v))>2:
+            auxgraph.add_node(M,weight=2)
+        else:
+            auxgraph.add_node(M,weight=4)
+    for A,B in Gemini.edges():
+        auxgraph.add_edge(A,B)
+    return auxgraph
+
+
+
+
+
 #----------- some example graphs
 def cycle_graph(n):
     """
@@ -3404,7 +3447,7 @@ def circulant(n,m=3):
     """
     Return the circulant graph with n nodes and step sizes 1 and m. Same as the Cayley graph of Z/nZ with respect to generating set {1,m}.
     """
-    # circulant(12,3) is the smallest example of a non-square, strongly CFS graph G for which there does not exist a vertex v such that G-{v} is strongly CFS.
+    # circulant(11,3) is the smallest example of a non-square, strongly CFS graph G for which there does not exist a vertex v such that G-{v} is strongly CFS.
     G=cycle_graph(n)
     for i in range(n):
         G.add_edge(i,(i+3)%n)
@@ -3483,11 +3526,11 @@ def tree(valence,radius):
                 spheres[rad].add(current_node)
     return G
           
-def mixedmultiple(inputgraph,multiplicityfunction):
+def blowup(weightedgraph):
     G=nx.Graph()
-    for (v,w) in inputgraph.edges():
-        for i in range(multiplicityfunction[v]):
-            for j in range(multiplicityfunction[w]):
+    for (v,w) in weightedgraph.edges():
+        for i in range(weightedgraph.nodes[v]['weight']):
+            for j in range(weightedgraph.nodes[w]['weight']):
                 G.add_edge((v,i),(w,j))
     return G
     
