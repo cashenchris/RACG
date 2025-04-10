@@ -1,6 +1,7 @@
 import networkx as nx # Works with networkx 3.2.1. (Prior to 3.1, nx.simple_cycles only works for directed graphs.)
 from networkx.algorithms import bipartite
 import itertools
+import math
 import copy
 
 
@@ -74,15 +75,16 @@ def draw(G,H=None,K=None,node_labels=True,**kwargs):
         nodedict=dict() # avoid having the word "frozenset" printed in node labels
         for g in G:
             if type(g)==frozenset:
-                try:
-                    if any(type(x)==frozenset for x in g):
-                        nodedict[g]=tuple([x if type(x)!=frozenset else tuple(x) for x in g])
-                except TypeError:
-                    nodedict[g]=set(g)
+                if any(type(x)==frozenset for x in g):
+                    nodedict[g]=tuple([x if type(x)!=frozenset else tuple(x) for x in g])
+                else:
+                    nodedict[g]=tuple(g)
             else:
                 try:
                     if any(type(x)==frozenset for x in g):
                         nodedict[g]=tuple([x if type(x)!=frozenset else tuple(x) for x in g])
+                    else:
+                        nodedict[g]=tuple(g)
                 except TypeError:
                     nodedict[g]=g
         plot_instance = netgraph.EditableGraph(G,node_labels=nodedict,node_label_fontdict=dict(size=11),edge_color=edge_color,**kwargs)
@@ -108,7 +110,7 @@ def is_CFS(G,precomputed_diagonal_graph=None):
     >>> G=suspension(3); is_CFS(G)
     True
     """
-    Gprime=G.subgraph([v for v in G if G.degree[v]<len(G)-1])
+    Gprime=G.subgraph([v for v in G if G.degree[v]<len(G)-1]) # Gprime is G minus cone vertices
     if precomputed_diagonal_graph is None:
         dg=diagonal_graph(Gprime)
     else:
@@ -131,12 +133,12 @@ def is_strongly_CFS(G):
     False
     """
     Gprime=G.subgraph([v for v in G if G.degree[v]<len(G)-1])
-    sg=square_graph(Gprime)
-    if not sg:
+    dg=diagonal_graph(Gprime)
+    if not dg:
         return not bool(Gprime)
-    if not nx.is_connected(sg):
+    if not nx.is_connected(dg):
         return False
-    return support(sg)==set(Gprime)
+    return support(dg)==set(Gprime)
 
 
 
@@ -2055,7 +2057,7 @@ def zero_one_ended_components(G):
                     
             
 #--------------------   Camp-Mihalik
-def has_locally_connected_boundary(G,assume_one_ended=False,assume_two_dimensional=False):
+def has_locally_connected_boundary(G,assume_one_ended=False,assume_two_dimensional=False, verbose=False):
     """
     Check Camp-Mihalik conditions to see if W_G has locally connected visual boundary.
 
@@ -2075,49 +2077,57 @@ def has_locally_connected_boundary(G,assume_one_ended=False,assume_two_dimension
     if not assume_two_dimensional:
         for a,b,c,d in induced_squares(G):
             if not is_clique(G,link(G,a)&link(G,b)&link(G,c)&link(G,d)):
-                raise InputError("Graph has an octohedron; Camp-Mihalik does not apply.")
+                raise InputError("Graph has an octahedron; Camp-Mihalik does not apply.")
     if not assume_one_ended and not is_one_ended(G):
         raise InputError("Graph does not give one-ended group; Camp-Mihalik does not apply.")
     # Step 1, check if G is suspension
-    orderednodes=[v for v in G]
-    for i in range(len(orderednodes)-1):
-        for j in range(i+1,len(orderednodes)):
-            if orderednodes[j] in G[orderednodes[i]]:
-                continue
-            commonneighbors=link(G,orderednodes[i])&link(G,orderednodes[j])
-            if len(commonneighbors)==len(G)-2:
-                if is_infinite_ended(G.subgraph(commonneighbors)):
-                    return False
-                else:
-                    return True
+    sus=get_suspension(G)
+    if sus is not None:
+        P,S=sus
+        if is_infinite_ended(G.subgraph(S)):
+            if verbose:
+                print("Suspension "+str(P)+"*"+str(S))
+            return False
+        else:
+            return True
     # Step 2, search for virtual factor separator
     vfs=find_virtual_factor_separator(G)
     if vfs is None:
         return True
     else:
+        if verbose:
+            print("Virtual factor separator "+str(vfs))
         return False
 
-def find_virtual_factor_separator(G,verbose=False):  
-    orderednodes=[v for v in G]
-    for i in range(len(orderednodes)-1):
-        s=orderednodes[i]
-        for j in range(i+1,len(orderednodes)):
-            t=orderednodes[j]
-            if t in G[s]:
+def find_virtual_factor_separator(G,assume_triangle_free=False,verbose=False):  
+    H,nodes=integer_graph(G)
+    if assume_triangle_free or is_triangle_free(H):
+        graph_is_triangle_free=True
+    else:
+        graph_is_triangle_free=False
+    for i in range(len(H)-1):
+        for j in distance_two(H,i):
+            if j<i:
                 continue
-            commonneighbors=link(G,s)&link(G,t)
-            if not commonneighbors:
-                continue
-            for D in powerset(commonneighbors,minsize=1):
-                D=set(D)
-                for Cprime in powerset(set.intersection(*[link(G,d) for d in D])): # Cprime=C-D
-                    Cprime=set(Cprime)
-                    if not {s,t}<=Cprime and is_clique(G,Cprime):
-                        C=Cprime|D
-                        if not nx.is_connected(G.subgraph(set(G)-C)):
-                            if verbose:
-                                print("C="+str(C)+", D="+str(D)+", s="+str(s)+", t="+str(t))
-                            return C,D,s,t
+        common_neighbors=link(H,i)&link(H,j)
+        for D in powerset(common_neighbors,minsize=1):
+            D=set(D)
+            if graph_is_triangle_free:
+                Cprime_generator=powerset(set.intersection(*[link(H,d) for d in D]),maxsize=1)
+            else:
+                Cprime_generator=powerset(set.intersection(*[link(H,d) for d in D]))
+            for Cprime in Cprime_generator: # Cprime=C-D
+                Cprime=set(Cprime)
+                if not {i,j}<=Cprime and is_clique(H,Cprime):
+                    C=Cprime|D
+                    if not nx.is_connected(H.subgraph(set(H)-C)):
+                        GC={nodes[k] for k in C}
+                        GD={nodes[k] for k in D}
+                        Gs=nodes[i]
+                        Gt=nodes[j]
+                        if verbose:
+                            print("C="+str(GC)+", D="+str(GD)+", s="+str(Gs)+", t="+str(Gt))
+                        return GC,GD,Gs,Gt
     return None
     
 
@@ -2688,6 +2698,19 @@ def all_unfoldings(G):
             
 
 #-------------- general graph structure
+def integer_graph(G):
+    """
+    Return a graph H isomorphic to G whose vertices are integers 0...len(G) and a list whose i entry is the vertex of G corresponding to vertex i of H. 
+    """
+    H=nx.Graph()
+    nodes=[v for v in G]
+    node_dict=dict()
+    for v in G:
+        node_dict[v]=nodes.index(v)
+    for a,b in G.edges():
+        H.add_edge(node_dict[a],node_dict[b])
+    return H,nodes
+
 def bipartition(G):
     """
     Given a graph G, return a partition of its vertices into two sets such that neither set contains a pair of adjacent vertices. 
@@ -2883,7 +2906,22 @@ def geodesic_simple_cycles(G):
         if all(nx.shortest_path_length(G,cycle[i],cycle[(i+j)%len(cycle)])==j for i,j in itertools.product(range(len(cycle)),range(1,1+len(cycle)//2))):
             yield cycle
             
-            
+def get_suspension(G):
+    if len(G)<2:
+        return None
+    H,nodes=integer_graph(G)
+    for i in range(len(H)-1):
+        for j in distance_two(H,i):
+            if j<i:
+                continue
+            common_neighbors=link(H,i)&link(H,j)
+            if len(common_neighbors)==len(H)-2:
+                return {nodes[i],nodes[j]},common_neighbors
+    return None
+
+def is_suspension(G):
+    S=get_suspension(G)
+    return not (S is None)
 
 def is_join(G):
     """
@@ -3417,7 +3455,33 @@ def reweighted_twin_module_graph(G):
         auxgraph.add_edge(A,B)
     return auxgraph
 
-
+#---------- isometrically embed an arbitrary graph into a strongly CFS graph
+def embed_into_strongly_CFS(G):
+    D=diagonal_graph(G)
+    leg_length=max([3,math.ceil(nx.diameter(G)/2)])
+    H=G.copy()
+    supported_vertices=set().union(*[support(C) for C in nx.connected_components(D)])
+    unsupported_vertices=set(G)-supported_vertices
+    spider_zero=0
+    while spider_zero in G:
+        spider_zero+=1
+    spider_one=spider_zero+1
+    while spider_one in G:
+        spider_one+=1
+    H.add_node(spider_zero)
+    H.add_node(spider_one)
+    for v in [tuple([v,]) for v in unsupported_vertices]+[tuple(d) for d in D]:
+        H.add_edges_from([(spider_zero,(v,1,0)),(spider_zero,(v,1,1)),(spider_one,(v,1,0)),(spider_one,(v,1,1))])
+        for i in range(2,leg_length):
+            H.add_edges_from([((v,i,0),(v,i-1,0)),((v,i,0),(v,i-1,1)),((v,i,1),(v,i-1,0)),((v,i,1),(v,i-1,1))])
+    for v in [tuple([v,]) for v in unsupported_vertices]:
+        H.add_edges_from([(v[0],(v,leg_length-1,0)),(v[0],(v,leg_length-1,1))])
+    for v in [tuple(d) for d in D]:
+        H.add_edges_from([(v[0],(v,leg_length-1,0)),(v[0],(v,leg_length-1,1))])
+        H.add_edges_from([(v[1],(v,leg_length-1,0)),(v[1],(v,leg_length-1,1))])
+    return H
+        
+        
 
 
 
@@ -3735,6 +3799,12 @@ def Wagner():
     G.add_edge(1,5)
     G.add_edge(2,6)
     G.add_edge(3,7)
+    return G
+
+def Cordes_Levcovitz():
+    G=double(nx.path_graph(6))
+    G.add_edges_from([((0,2),(0,1)), ((0,2),(3,1)), ((1,2),(1,1)), ((1,2),(4,1)), ((2,2),(2,1)),((2,2),(5,1))])
+    G.add_edges_from([((0,-1),(0,0)), ((0,-1),(3,0)), ((1,-1),(1,0)), ((1,-1),(4,0)), ((2,-1),(2,0)),((2,-1),(5,0))])
     return G
 
 #--------------------------- for exporting graph 
