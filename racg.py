@@ -1712,9 +1712,9 @@ def is_one_or_two_flat(G,S):
 
 
 
-def compliant_cycle(G,verbose=False,try_subordinate_joins=1,enforce_extra_S_condition=True):
+def compliant_cycle(G,verbose=False,try_subordinate_joins=1,enforce_extra_S_condition=True,no_bridge=False):
     """
-    Find a compliant set S and an induced path A satisfying theorem 8.14. Specifically, need that A intersects S only at its endpoints and for every interior vertex a in A, link(a)\cap S is a clique. We also need that there does not exist S' that is in the same QI orbit as S, intersects S in incomplete set, and contains some vertex of A. When S is hyperbolic or square the S' condition is automatic.  
+    Find a compliant set S and an induced path P satisfying theorem 7.5. Specifically, need that P intersects S only at its endpoints and for every interior vertex a in P, link(a)\cap S is a clique. We also need that there does not exist compliant S' that is in the same QI orbit as S, intersects S and P in incomplete sets. When S is hyperbolic or square the S' condition is automatic.  
     
     Option try_subordinate_joins restricts choices of S to make it easier to check for S'. 
     try_subordinate_joins:
@@ -1725,6 +1725,7 @@ def compliant_cycle(G,verbose=False,try_subordinate_joins=1,enforce_extra_S_cond
 
     If enforce_extra_S_condition=False do not check for S' at all. This is for experimentation, output may not satisfy the conditions of the theorem. 
     """
+    # options do not allow checking for S that properly contains a square but is not a join. Would need extra code to screen for S' in same QI class as S in such cases. 
     compliant_all=compliant_subsets(G)
     compliant_hyperbolic=set()
     compliant_square=set()
@@ -1761,74 +1762,105 @@ def compliant_cycle(G,verbose=False,try_subordinate_joins=1,enforce_extra_S_cond
                     compliant_max_join_non_suspension.add(J)
                 else:
                     compliant_non_max_join_non_suspension.add(J)
-    def get_path_avoiding_forbidden(S,forbidden):
-        # return an pair path, auxgraph such that the first and last vertices of path are nonadjacent vertices of S, no other vertices of path are in S or forbidden, and each consecutive pair in path is either an edge in G or is an edge in auxgraph with attribute 'bridges' that gives a list of compliant sets containing both the vertices and whose intersection with S is a clique.  
-        bridges=[T for T in compliant_all if is_clique(G,S&T)]
-        for first,last in ((x,y) for x,y in itertools.combinations(S,2) if not is_clique(G,{x,y})):
-            # case that first and last edges not bridges
-            auxgraph=(G.subgraph((set(G)-forbidden)|{first,last})).copy()
-            for T in bridges:
-                for c,d in itertools.combinations(set(T),2):
-                    if c in auxgraph and d in auxgraph and c!=first and d!=first and c!=last and d!=last:
-                        if (c,d) not in auxgraph.edges():
-                            auxgraph.add_edge(c,d,bridges=[T,])
-                        elif 'bridges' in auxgraph[c][d]:
-                            auxgraph[c][d]['bridges'].append(T)
+    def get_path_avoiding_forbidden(S,forbidden,first,last,double_problem=[]):
+        # return a pair path, auxgraph such that path has the designated first and last vertices, not other vertices of path are in forbidden, no nonadjacent pair of vertices in path are in double_problem, and each consecutive pair in path is either an edge in G or is an edge in auxgraph with attribute 'bridges' that gives a list of compliant sets containing both the vertices and whose intersection with S is a clique.
+        if no_bridge:
+            bridges=[]
+        else:
+            bridges=[T for T in compliant_all if is_clique(G,S&T)]
+        # case that first and last edges not bridges
+        auxgraph=(G.subgraph((set(G)-forbidden)|{first,last})).copy()
+        for T in bridges:
+            for c,d in itertools.combinations(set(T),2):
+                if c in auxgraph and d in auxgraph and c!=first and d!=first and c!=last and d!=last:
+                    if (c,d) not in auxgraph.edges():
+                        auxgraph.add_edge(c,d,bridges=[T,])
+                    elif 'bridges' in auxgraph[c][d]:
+                        auxgraph[c][d]['bridges'].append(T)
+        if double_problem:
+            for the_path in nx.all_simple_paths(auxgraph,first,last):
+                if all(is_clique(G,set(Sprime)&set(the_path)) for Sprime in double_problem):
+                    return the_path,auxgraph
+        else:
             try:
                 the_path=nx.shortest_path(auxgraph,first,last)
                 assert(len(the_path)>3) # should not be possible for first and last to have common neighbor in auxgraph; such a vertex would have been forbidden for having link intersecting S_0 in a nonclique
                 return the_path,auxgraph
             except nx.NetworkXNoPath:
-                continue
-            # case that only first edge is a bridge
-            for A in [T for T in bridges if first in T]:
-                for a in [a for a in A if a!=first and a not in forbidden]:
-                    auxgraph=(G.subgraph((set(G)-forbidden)|set([last,]))).copy()
-                    for T in [T for T in bridges if T!=A]:
-                        for c,d in itertools.combinations(set(T),2):
-                            if c in auxgraph and d in auxgraph and c!=last and d!=last:
-                                if (c,d) not in auxgraph.edges():
-                                    auxgraph.add_edge(c,d,bridges=[T,])
-                                elif 'bridges' in auxgraph[c][d]:
-                                    auxgraph[c][d]['bridges'].append(T)
+                    pass
+        if no_bridge:
+            return None, None
+        # case that first edge is a bridge and last edge is not
+        for A in [T for T in bridges if first in T]:
+            for a in [a for a in A if a!=first and a not in forbidden]:
+                auxgraph=(G.subgraph((set(G)-forbidden)|set([last,]))).copy()
+                for T in [T for T in bridges if T!=A]:
+                    for c,d in itertools.combinations(set(T),2):
+                        if c in auxgraph and d in auxgraph and c!=last and d!=last:
+                            if (c,d) not in auxgraph.edges():
+                                auxgraph.add_edge(c,d,bridges=[T,])
+                            elif 'bridges' in auxgraph[c][d]:
+                                auxgraph[c][d]['bridges'].append(T)
+                if double_problem:
+                    for the_path in nx.all_simple_paths(auxgraph,a,last):
+                        if all(is_clique(G,set(Sprime)&(set([first])|set(the_path))) for Sprime in double_problem):
+                            whole_path=[first,]+the_path # whole_path contains at least one bridge edge and at least one G edge
+                            auxgraph.add_edge(first,a,bridges=[A,])
+                            return whole_path,auxgraph
+                else:
                     try:
                         the_path=nx.shortest_path(auxgraph,a,last) # by construction, the_path ends with a G edge
-                        whole_path=[first,]+the_path # whole_path contains at least one bridge edge and at least on G edge
+                        whole_path=[first,]+the_path # whole_path contains at least one bridge edge and at least one G edge
                         auxgraph.add_edge(first,a,bridges=[A,])
                         return whole_path,auxgraph
                     except nx.NetworkXNoPath:
-                        continue
-            # case that only last edge is a bridge
-            for B in [T for T in bridges if last in T]:
-                for b in [b for b in B if b!=last and b not in forbidden]:
-                    auxgraph=(G.subgraph((set(G)-forbidden)|set([first,]))).copy()
-                    for T in [T for T in bridges if T!=B]:
-                        for c,d in itertools.combinations(set(T),2):
-                            if c in auxgraph and d in auxgraph and c!=first and d!=first:
-                                if (c,d) not in auxgraph.edges():
-                                    auxgraph.add_edge(c,d,bridges=[T,])
-                                elif 'bridges' in auxgraph[c][d]:
-                                    auxgraph[c][d]['bridges'].append(T)
+                        pass
+        # case that  last edge is a bridge and first edge is not
+        for B in [T for T in bridges if last in T]:
+            for b in [b for b in B if b!=last and b not in forbidden]:
+                auxgraph=(G.subgraph((set(G)-forbidden)|set([first,]))).copy()
+                for T in [T for T in bridges if T!=B]:
+                    for c,d in itertools.combinations(set(T),2):
+                        if c in auxgraph and d in auxgraph and c!=first and d!=first:
+                            if (c,d) not in auxgraph.edges():
+                                auxgraph.add_edge(c,d,bridges=[T,])
+                            elif 'bridges' in auxgraph[c][d]:
+                                auxgraph[c][d]['bridges'].append(T)
+                if double_problem:
+                    for the_path in nx.all_simple_paths(auxgraph,first,b):
+                        if all(is_clique(G,set(Sprime)&(set([last])|set(the_path))) for Sprime in double_problem):
+                            whole_path=the_path+[last,] # whole_path contains at least one bridge edge and at least one G edge
+                            auxgraph.add_edge(b,last,bridges=[B,])
+                            return whole_path,auxgraph
+                else:
                     try:
                         the_path=nx.shortest_path(auxgraph,first,b)
                         whole_path=the_path+[last,]
                         auxgraph.add_edge(b,last,bridges=[B,])
                         return whole_path,auxgraph
                     except nx.NetworkXNoPath:
-                        continue
-            # case that first and last edges both bridges
-            for A in [T for T in bridges if first in T]:
-                for B in [T for T in bridges if last in T and T!=A]: # A!=B since otherwise we have only P is a 2-anticlique
-                    for a in [a for a in A if a!=first and a not in forbidden]:
-                        for b in [b for b in B if b!=last and b not in forbidden]:
-                            auxgraph=(G.subgraph(set(G)-forbidden)).copy()
-                            for T in [T for T in bridges if T!=A and T!=B]:
-                                for c,d in itertools.combinations(set(T),2):
-                                    if c in auxgraph and d in auxgraph:
-                                        if (c,d) not in auxgraph.edges():
-                                            auxgraph.add_edge(c,d,bridges=[T,])
-                                        elif 'bridges' in auxgraph[c][d]:
-                                            auxgraph[c][d]['bridges'].append(T)
+                        pass
+        # case that first and last edges both bridges
+        for A in [T for T in bridges if first in T]:
+            for B in [T for T in bridges if last in T and T!=A]: # A!=B since otherwise we have only P is a 2-anticlique
+                for a in [a for a in A if a!=first and a not in forbidden]:
+                    for b in [b for b in B if b!=last and b not in forbidden]:
+                        auxgraph=(G.subgraph(set(G)-forbidden)).copy()
+                        for T in [T for T in bridges if T!=A and T!=B]:
+                            for c,d in itertools.combinations(set(T),2):
+                                if c in auxgraph and d in auxgraph:
+                                    if (c,d) not in auxgraph.edges():
+                                        auxgraph.add_edge(c,d,bridges=[T,])
+                                    elif 'bridges' in auxgraph[c][d]:
+                                        auxgraph[c][d]['bridges'].append(T)
+                        if double_problem:
+                            for the_path in nx.all_simple_paths(auxgraph,a,b):
+                                if all(is_clique(G,set(Sprime)&(set([first,last])|set(the_path))) for Sprime in double_problem):
+                                    whole_path=[first,]+the_path+[last,] # whole_path contains at least one bridge edge and at least one G edge
+                                    auxgraph.add_edge(first,a,bridges=[A,])
+                                    auxgraph.add_edge(b,last,bridges=[B,])
+                                    return whole_path,auxgraph
+                        else:
                             try:
                                 the_path=nx.shortest_path(auxgraph,a,b)
                                 auxgraph.add_edge(first,a,bridges=[A,])
@@ -1836,40 +1868,55 @@ def compliant_cycle(G,verbose=False,try_subordinate_joins=1,enforce_extra_S_cond
                                 whole_path=[first,]+the_path+[last,] # whole_path contains at least two bridge edges
                                 return whole_path,auxgraph
                             except nx.NetworkXNoPath:
-                                continue
+                                pass
         return None, None
+        # end of get_path_avoiding_forbidden
     if try_subordinate_joins in {0,1}: # consider cases that S is square, hyperbolic, or max join
         for S in compliant_hyperbolic|compliant_square:
-            forbidden=set(S)|{v for v in G if not is_clique(G,link(G,v)&S)}
-            the_path,auxgraph=get_path_avoiding_forbidden(S,forbidden)
-            if the_path is not None:
-                return S,the_path,auxgraph
+            forbidden=set(S)|{v for v in G if not is_clique(G,link(G,v)&S)} # path should not reenter S or include vertices whose link has large intersection with S
+            for first,last in ((x,y) for x,y in itertools.combinations(S,2) if not is_clique(G,{x,y})): # potential first and last vertices of P
+                for T in compliant_hyperbolic: # only want S, first, last such that no other compliant set T satisfies {first,last}<= T < S. In this case S is either square-free or a square, so propert subset is square free. 
+                    if T<S and {first,last}<=T:
+                        continue
+                the_path,auxgraph=get_path_avoiding_forbidden(S,forbidden,first,last)
+                # since S is hyperbolic or square, no need to check for Sprime. 
+                if the_path is not None:
+                    return S,the_path,auxgraph
         for J in compliant_max_join_suspension|compliant_max_join_non_suspension:
             A,B=J
             if len(A)>len(B):
                 A,B=B,A
             S=set(A)|set(B)
             Snbhd={v for v in G if (v not in S) and link(G,v)&S} 
-            forbidden=set(S)|{v for v in G if not is_clique(G,link(G,v)&S)}
-            if enforce_extra_S_condition:
-                seed_generator=(K for K in RIC if K!=J)
-                while True:
-                    try:
-                        K=next(seed_generator)
-                    except StopIteration:
-                        break
-                    X,Y=K
-                    if len(X)>len(Y):
-                        X,Y=Y,X
-                    Sprime=set(X)|set(Y)
-                    if Sprime<=forbidden:
+            baseforbidden=set(S)|{v for v in G if not is_clique(G,link(G,v)&S)}
+            for first,last in ((x,y) for x,y in itertools.combinations(S,2) if not is_clique(G,{x,y})): # potential first and last vertices of P
+                forbidden=baseforbidden
+                for T in compliant_all: # only want S, first, last such that no other compliant set T satisfies {first,last} <= T < S. 
+                    if T<S and {first,last}<=T:
                         continue
-                    if (len(A)==2 and len(X)==2) or (len(A)>2 and len(X)>2):
-                        if neighbor_types[J]==neighbor_types[K] and not is_clique(G,S & Sprime):
-                            forbidden|=Sprime
-            the_path,auxgraph=get_path_avoiding_forbidden(S,forbidden)
-            if the_path is not None:
-                return S,the_path,auxgraph
+                if enforce_extra_S_condition: # check for potential Sprime and forbid additional vertices
+                    double_problem=list()
+                    seed_generator=(K for K in RIC if K!=J)
+                    while True:
+                        try:
+                            K=next(seed_generator)
+                        except StopIteration:
+                            break
+                        X,Y=K
+                        if len(X)>len(Y):
+                            X,Y=Y,X
+                        Sprime=set(X)|set(Y)
+                        if Sprime<=forbidden:
+                            continue
+                        if (len(A)==2 and len(X)==2) or (len(A)>2 and len(X)>2):
+                            if neighbor_types[J]==neighbor_types[K] and not is_clique(G,S & Sprime):
+                                if first in Sprime or last in Sprime:
+                                    forbidden|=Sprime
+                                else:
+                                    double_problem.append(Sprime)
+                the_path,auxgraph=get_path_avoiding_forbidden(S,forbidden,first,last,double_problem)
+                if the_path is not None:
+                    return S,the_path,auxgraph
     if try_subordinate_joins in {1,2}: # consider cases that S is a thick join but not maximal 
         for J in compliant_non_max_join_suspension|compliant_non_max_join_non_suspension:
             A,B=J
@@ -1879,47 +1926,56 @@ def compliant_cycle(G,verbose=False,try_subordinate_joins=1,enforce_extra_S_cond
             Snbhd={v for v in G if (v not in S) and link(G,v)&S} 
             max_joins_containing_S={frozenset({X,Y}) for X,Y in RIC if S<=set(X)|set(Y)}
             S_is_suspension=bool(len(A)==2)
-            forbidden=set(S)|{v for v in G if not is_clique(G,link(G,v)&S)}
-            if enforce_extra_S_condition:
+            baseforbidden=set(S)|{v for v in G if not is_clique(G,link(G,v)&S)}
+            for first,last in ((x,y) for x,y in itertools.combinations(S,2) if not is_clique(G,{x,y})): # potential first and last vertices of P
+                forbidden=baseforbidden
+                for T in compliant_all: # only want S, first, last such that no other compliant set T satisfies {first,last} <= T < S. 
+                    if T<S and {first,last}<=T:
+                        continue
+                if enforce_extra_S_condition:
                 # enumerate subgraphs that intersect S in a nonclique and could conceivably by in same QI orbit as S
-                seed_generator=itertools.chain.from_iterable([itertools.combinations(A,2),itertools.combinations(B,2)])
-                while True:
-                    try:
-                        nonclique_in_S_intersection=next(seed_generator)
-                    except StopIteration:
-                        break
-                    x1,x2=nonclique_in_S_intersection
-                    L=link(G,x1)&link(G,x2)
-                    if not S_is_suspension:
-                        possible_Y_factors=powerset(L,minsize=3)
-                    else:
-                        possible_Y_factors=powerset(L,minsize=2)
-                    for Y in possible_Y_factors:
-                        maximal_complementary_factor=set.intersection(*[link(G,y) for y in Y])
+                    double_problem=list()
+                    seed_generator=itertools.chain.from_iterable([itertools.combinations(A,2),itertools.combinations(B,2)])
+                    while True:
+                        try:
+                            nonclique_in_S_intersection=next(seed_generator)
+                        except StopIteration:
+                            break
+                        x1,x2=nonclique_in_S_intersection
+                        L=link(G,x1)&link(G,x2)
                         if not S_is_suspension:
-                            possible_X_factors=powerset(maximal_complementary_factor-{x1,x2}, minsize=1)
+                            possible_Y_factors=powerset(L,minsize=3)
                         else:
-                            if len(Y)==2:
+                            possible_Y_factors=powerset(L,minsize=2)
+                        for Y in possible_Y_factors:
+                            maximal_complementary_factor=set.intersection(*[link(G,y) for y in Y])
+                            if not S_is_suspension:
                                 possible_X_factors=powerset(maximal_complementary_factor-{x1,x2}, minsize=1)
                             else:
-                                possible_X_factors=[set(),]
-                        for Xprime in possible_X_factors:
-                            X=set(Xprime)|{x1,x2}
-                            if len(X)>len(Y):
-                                X,Y=Y,X
-                            Sprime=set(X)|set(Y)
-                            # Sprime is a thick join of the same type suspension/nonsuspension as S. Now further checks to exclude it if it cannot be in same QI orbit as S
-                            biggerX=set.intersection(*[link(G,y) for y in Y])
-                            biggerY=set.intersection(*[link(G,x) for x in X])
-                            if X==biggerX and Y==biggerY: # this X*Y is a maximal join
-                                continue
-                            ###### consider if the set of maximal joins containing S is similar to the set of maximal joins containing Sprime
-                            max_joins_containing_Sprime={frozenset({U,V}) for U,V in RIC if Sprime<=set(U)|set(V)}
-                            if {neighbor_types[J] for J in max_joins_containing_S}=={neighbor_types[K] for K in max_joins_containing_Sprime}:
-                                forbidden|=Sprime
-            the_path,auxgraph=get_path_avoiding_forbidden(S,forbidden)
-            if the_path is not None:
-                return S,the_path,auxgraph
+                                if len(Y)==2:
+                                    possible_X_factors=powerset(maximal_complementary_factor-{x1,x2}, minsize=1)
+                                else:
+                                    possible_X_factors=[set(),]
+                            for Xprime in possible_X_factors:
+                                X=set(Xprime)|{x1,x2}
+                                if len(X)>len(Y):
+                                    X,Y=Y,X
+                                Sprime=set(X)|set(Y)
+                                # Sprime is a thick join of the same type suspension/nonsuspension as S. Now further checks to exclude it if it cannot be in same QI orbit as S
+                                biggerX=set.intersection(*[link(G,y) for y in Y])
+                                biggerY=set.intersection(*[link(G,x) for x in X])
+                                if X==biggerX and Y==biggerY: # this X*Y is a maximal join
+                                    continue
+                                ###### consider if the set of maximal joins containing S is similar to the set of maximal joins containing Sprime
+                                max_joins_containing_Sprime={frozenset({U,V}) for U,V in RIC if Sprime<=set(U)|set(V)}
+                                if {neighbor_types[J] for J in max_joins_containing_S}=={neighbor_types[K] for K in max_joins_containing_Sprime}:
+                                    if first in Sprime or last in Sprime:
+                                        forbidden|=Sprime
+                                    else:
+                                        double_problem.append(Sprime)
+                the_path,auxgraph=get_path_avoiding_forbidden(S,forbidden,first,last,double_problem)
+                if the_path is not None:
+                    return S,the_path,auxgraph
     #for S in compliant_other: # don't know what to do with these
     return None
 
