@@ -1762,29 +1762,24 @@ def compliant_cycle(G,verbose=False,try_subordinate_joins=1,enforce_extra_S_cond
                 else:
                     compliant_non_max_join_non_suspension.add(J)
     def get_path_avoiding_forbidden(S,forbidden):
+        # return an pair path, auxgraph such that the first and last vertices of path are nonadjacent vertices of S, no other vertices of path are in S or forbidden, and each consecutive pair in path is either an edge in G or is an edge in auxgraph with attribute 'bridges' that gives a list of compliant sets containing both the vertices and whose intersection with S is a clique.  
         bridges=[T for T in compliant_all if is_clique(G,S&T)]
         for first,last in ((x,y) for x,y in itertools.combinations(S,2) if not is_clique(G,{x,y})):
-            # case that first and last edges both bridges
-            for A in [T for T in bridges if first in T]:
-                for B in [T for T in bridges if last in T and T!=A]: # A!=B since otherwise we have only P is a 2-anticlique
-                    for a in [a for a in A if a!=first and a not in forbidden]:
-                        for b in [b for b in B if b!=last and b not in forbidden]:
-                            auxgraph=(G.subgraph(set(G)-forbidden)).copy()
-                            for T in [T for T in bridges if T!=A and T!=B]:
-                                for c,d in itertools.combinations(set(T),2):
-                                    if c in auxgraph and d in auxgraph:
-                                        if (c,d) not in auxgraph.edges():
-                                            auxgraph.add_edge(c,d,bridges=[T,])
-                                        elif 'bridges' in auxgraph[c][d]:
-                                            auxgraph[c][d]['bridges'].append(T)
-                            try:
-                                the_path=nx.shortest_path(auxgraph,a,b)
-                                auxgraph.add_edge(first,a,bridges=[A,])
-                                auxgraph.add_edge(b,last,bridges=[B,])
-                                whole_path=[first,]+the_path+[last,] # whole_path contains at least two bridge edges
-                                return whole_path,auxgraph
-                            except nx.NetworkXNoPath:
-                                continue
+            # case that first and last edges not bridges
+            auxgraph=(G.subgraph((set(G)-forbidden)|{first,last})).copy()
+            for T in bridges:
+                for c,d in itertools.combinations(set(T),2):
+                    if c in auxgraph and d in auxgraph and c!=first and d!=first and c!=last and d!=last:
+                        if (c,d) not in auxgraph.edges():
+                            auxgraph.add_edge(c,d,bridges=[T,])
+                        elif 'bridges' in auxgraph[c][d]:
+                            auxgraph[c][d]['bridges'].append(T)
+            try:
+                the_path=nx.shortest_path(auxgraph,first,last)
+                assert(len(the_path)>3) # should not be possible for first and last to have common neighbor in auxgraph; such a vertex would have been forbidden for having link intersecting S_0 in a nonclique
+                return the_path,auxgraph
+            except nx.NetworkXNoPath:
+                continue
             # case that only first edge is a bridge
             for A in [T for T in bridges if first in T]:
                 for a in [a for a in A if a!=first and a not in forbidden]:
@@ -1821,21 +1816,27 @@ def compliant_cycle(G,verbose=False,try_subordinate_joins=1,enforce_extra_S_cond
                         return whole_path,auxgraph
                     except nx.NetworkXNoPath:
                         continue
-            # case that first and last edges not bridges
-            auxgraph=(G.subgraph((set(G)-forbidden)|{first,last})).copy()
-            for T in bridges:
-                for c,d in itertools.combinations(set(T),2):
-                    if c in auxgraph and d in auxgraph and c!=first and d!=first and c!=last and d!=last:
-                        if (c,d) not in auxgraph.edges():
-                            auxgraph.add_edge(c,d,bridges=[T,])
-                        elif 'bridges' in auxgraph[c][d]:
-                            auxgraph[c][d]['bridges'].append(T)
-            try:
-                the_path=nx.shortest_path(auxgraph,first,last)
-                assert(len(the_path)>3) # should not be possible for first and last to have common neighbor in auxgraph; such a vertex would have been forbidden for having link intersecting S_0 in a nonclique
-                return the_path,auxgraph
-            except nx.NetworkXNoPath:
-                continue
+            # case that first and last edges both bridges
+            for A in [T for T in bridges if first in T]:
+                for B in [T for T in bridges if last in T and T!=A]: # A!=B since otherwise we have only P is a 2-anticlique
+                    for a in [a for a in A if a!=first and a not in forbidden]:
+                        for b in [b for b in B if b!=last and b not in forbidden]:
+                            auxgraph=(G.subgraph(set(G)-forbidden)).copy()
+                            for T in [T for T in bridges if T!=A and T!=B]:
+                                for c,d in itertools.combinations(set(T),2):
+                                    if c in auxgraph and d in auxgraph:
+                                        if (c,d) not in auxgraph.edges():
+                                            auxgraph.add_edge(c,d,bridges=[T,])
+                                        elif 'bridges' in auxgraph[c][d]:
+                                            auxgraph[c][d]['bridges'].append(T)
+                            try:
+                                the_path=nx.shortest_path(auxgraph,a,b)
+                                auxgraph.add_edge(first,a,bridges=[A,])
+                                auxgraph.add_edge(b,last,bridges=[B,])
+                                whole_path=[first,]+the_path+[last,] # whole_path contains at least two bridge edges
+                                return whole_path,auxgraph
+                            except nx.NetworkXNoPath:
+                                continue
         return None, None
     if try_subordinate_joins in {0,1}: # consider cases that S is square, hyperbolic, or max join
         for S in compliant_hyperbolic|compliant_square:
