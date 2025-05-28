@@ -1724,6 +1724,8 @@ def compliant_cycle(G,verbose=False,try_subordinate_joins=1,enforce_extra_S_cond
     Option 0 is faster than 1. Option 2 is for if 0 already failed, so we don't repeat work by trying 1. 
 
     If enforce_extra_S_condition=False do not check for S' at all. This is for experimentation, output may not satisfy the conditions of the theorem. 
+
+    If no_bridge=True only search for P a single connected path, no bridges. 
     """
     # options do not allow checking for S that properly contains a square but is not a join. Would need extra code to screen for S' in same QI class as S in such cases. 
     compliant_all=compliant_subsets(G)
@@ -1735,6 +1737,7 @@ def compliant_cycle(G,verbose=False,try_subordinate_joins=1,enforce_extra_S_cond
     compliant_non_max_join_non_suspension=set()
     compliant_other=set()
     RIC=MPRG_fundamental_domain(G)
+    cut_vertices={v for v in MPRG_cut_vertices(G,RIC)}
     neighbor_types=MPRG_neighbor_types(G,RIC)
     for S in compliant_all: # sort the compliant sets
         if not has_induced_square(G,S):
@@ -1763,7 +1766,8 @@ def compliant_cycle(G,verbose=False,try_subordinate_joins=1,enforce_extra_S_cond
                 else:
                     compliant_non_max_join_non_suspension.add(J)
     def get_path_avoiding_forbidden(S,forbidden,first,last,double_problem=[]):
-        # return a pair path, auxgraph such that path has the designated first and last vertices, not other vertices of path are in forbidden, no nonadjacent pair of vertices in path are in double_problem, and each consecutive pair in path is either an edge in G or is an edge in auxgraph with attribute 'bridges' that gives a list of compliant sets containing both the vertices and whose intersection with S is a clique.
+        # return a pair path, auxgraph such that path has the designated first and last vertices, no other vertices of path are in forbidden, no nonadjacent pair of vertices in path are in double_problem, and each consecutive pair in path is either an edge in G or is an edge in auxgraph with attribute 'bridges' that gives a list of compliant sets containing both the vertices and whose intersection with S is a clique.
+        # for sets in double_problem, the path is not allowed to meet them in an anticlique
         if no_bridge:
             bridges=[]
         else:
@@ -1890,12 +1894,12 @@ def compliant_cycle(G,verbose=False,try_subordinate_joins=1,enforce_extra_S_cond
             Snbhd={v for v in G if (v not in S) and link(G,v)&S} 
             baseforbidden=set(S)|{v for v in G if not is_clique(G,link(G,v)&S)}
             for first,last in ((x,y) for x,y in itertools.combinations(S,2) if not is_clique(G,{x,y})): # potential first and last vertices of P
-                forbidden=baseforbidden
+                forbidden=baseforbidden.copy()
                 for T in compliant_all: # only want S, first, last such that no other compliant set T satisfies {first,last} <= T < S. 
                     if T<S and {first,last}<=T:
                         continue
+                double_problem=list()
                 if enforce_extra_S_condition: # check for potential Sprime and forbid additional vertices
-                    double_problem=list()
                     seed_generator=(K for K in RIC if K!=J)
                     while True:
                         try:
@@ -1909,7 +1913,7 @@ def compliant_cycle(G,verbose=False,try_subordinate_joins=1,enforce_extra_S_cond
                         if Sprime<=forbidden:
                             continue
                         if (len(A)==2 and len(X)==2) or (len(A)>2 and len(X)>2):
-                            if neighbor_types[J]==neighbor_types[K] and not is_clique(G,S & Sprime):
+                            if bool(J in cut_vertices)==bool(K in cut_vertices) and neighbor_types[J]==neighbor_types[K] and not is_clique(G,S & Sprime):
                                 if first in Sprime or last in Sprime:
                                     forbidden|=Sprime
                                 else:
@@ -1928,13 +1932,13 @@ def compliant_cycle(G,verbose=False,try_subordinate_joins=1,enforce_extra_S_cond
             S_is_suspension=bool(len(A)==2)
             baseforbidden=set(S)|{v for v in G if not is_clique(G,link(G,v)&S)}
             for first,last in ((x,y) for x,y in itertools.combinations(S,2) if not is_clique(G,{x,y})): # potential first and last vertices of P
-                forbidden=baseforbidden
+                forbidden=baseforbidden.copy()
                 for T in compliant_all: # only want S, first, last such that no other compliant set T satisfies {first,last} <= T < S. 
                     if T<S and {first,last}<=T:
                         continue
+                double_problem=list()
                 if enforce_extra_S_condition:
                 # enumerate subgraphs that intersect S in a nonclique and could conceivably by in same QI orbit as S
-                    double_problem=list()
                     seed_generator=itertools.chain.from_iterable([itertools.combinations(A,2),itertools.combinations(B,2)])
                     while True:
                         try:
@@ -2209,9 +2213,10 @@ def MPRG_fundamental_domain(G):
 
 def MPRG_neighbor_types(G,F):
     """
-    Given a triangle-free graph G and its MPRG_fundamental_domain F, return a dict whose keys are vertices of F, and whose values are frozensets of tuples (neighbor,intersection), where neighbor in {'suspension','non-suspension'} and intersection in {'square','suspension','non-suspension'}, describing the types of neighbors of J in F and their intersection with J. 
+    Given a triangle-free graph G and its MPRG_fundamental_domain F, return a dict whose keys are vertices of F, and whose values are frozensets of tuples (neighbor,intersection,bool(cut)), where neighbor in {'suspension','non-suspension'}, intersection in {'square','suspension','non-suspension'}, describing the types of neighbors K of J in F, the type of J\cap K, and whether or not K is a cut vertex of the MPRG. 
     """
     result=dict()
+    cut_vertices={v for v in MPRG_cut_vertices(G,F)}
     for J in F:
         result[J]=set()
         for K in F[J]:
@@ -2237,7 +2242,7 @@ def MPRG_neighbor_types(G,F):
                 intersectiontype='suspension'
             else:
                 intersectiontype='non-suspension'
-            result[J].add((neighbortype,intersectiontype))
+            result[J].add((neighbortype,intersectiontype,bool(K in cut_vertices)))
     for J in result:
         result[J]=frozenset(result[J])
     return result
@@ -2271,7 +2276,34 @@ def edges_not_in_any_thick_join(G,precomputed_MPRG_fundamtenal_domain=None):
     for a,b in G.edges():
         if not any(a in S and b in S for S in vertex_supports):
             yield a,b
-    
+            
+def MPRG_cut_vertices(G,F):
+    """
+    Given a triangle-free, strongly CFS graph G and fundamental domain F of the MPRG of the RACG W_G, generate vertices of F that are cut vertices of the MPRG.
+    """
+    for v in F:
+        for a in MPRG_stab(F,v):
+            if all(a not in MPRG_stab(F,w) for w in F if w!=v):
+                if link(G,a)<=MPRG_stab(F,v):
+                    yield v,'type 1'
+                    break
+        else:
+            complementary_components={frozenset(C) for C in nx.connected_components(F.subgraph(set(F)-set([v,])))}
+            if len(complementary_components)==1:
+                continue
+            for R in powerset(complementary_components,minsize=1,maxsize=math.ceil(len(complementary_components)/2)):
+                R=set(R)
+                Rprime={r for r in itertools.chain.from_iterable(complementary_components-R)}|set([v,])
+                R={r for r in itertools.chain.from_iterable(R)}|set([v,])
+                Gamma=G.subgraph({b for b in G if MPRG_fixed(F,b)&R})
+                Gammaprime=G.subgraph({b for b in G if MPRG_fixed(F,b)&Rprime})
+                if MPRG_stab(F,v)==set(Gamma)&set(Gammaprime):
+                    gammasedges={e for e in Gamma.edges()}|{e for e in Gammaprime.edges()}
+                    if all(e in gammasedges for e in G.edges()):
+                        yield v, 'type 2'
+                        break
+            
+        
 
 def get_MPRG_ladder(G,rs=None,ss=None,verbose=False,small_first=False, try_hard=False):
     """
@@ -3872,13 +3904,13 @@ def graph2tikz(netgraph_plot_instance):
     """
     tikzoutputstring='\\begin{tikzpicture}\\tiny\n'
     for i in range(len(netgraph_plot_instance.nodes)):
-        thisnodepos=netgraph_plot_instance.node_positions[netgraph_plot_instance.nodes[i]][0]-.5+(netgraph_plot_instance.node_positions[netgraph_plot_instance.nodes[i]][1]-.5)*1j
+        thisnodepos=4*(netgraph_plot_instance.node_positions[netgraph_plot_instance.nodes[i]][0]-.5)+4*(netgraph_plot_instance.node_positions[netgraph_plot_instance.nodes[i]][1]-.5)*1j
         thisnodeangle=180.0*cmath.phase(thisnodepos)/cmath.pi
-        tikzoutputstring+='\coordinate[label={[label distance=-1pt] '+"{:.2f}".format(thisnodeangle)+':$'+str(netgraph_plot_instance.nodes[i])+'$}] ('+str(i)+') at ('+"{:.2f}".format(thisnodepos.real)+','+"{:.2f}".format(thisnodepos.imag)+');\n'
+        tikzoutputstring+='\coordinate[label={[label distance=0pt] '+"{:.2f}".format(thisnodeangle)+':$'+str(netgraph_plot_instance.nodes[i])+'$}] ('+str(i)+') at ('+"{:.2f}".format(thisnodepos.real)+','+"{:.2f}".format(thisnodepos.imag)+');\n'
     for initial,final in netgraph_plot_instance.edges:
         tikzoutputstring+='\\draw ('+str(netgraph_plot_instance.nodes.index(initial))+')--('+str(netgraph_plot_instance.nodes.index(final))+');\n'
     for i in range(len(netgraph_plot_instance.nodes)):
-        tikzoutputstring+='\\filldraw ('+str(i)+') circle (.5pt);\n'
+        tikzoutputstring+='\\filldraw ('+str(i)+') circle (1pt);\n'
     tikzoutputstring+= '\\end{tikzpicture}'
     print(tikzoutputstring)
 
