@@ -2125,14 +2125,14 @@ def has_locally_connected_boundary(G,assume_one_ended=False,assume_two_dimension
     >>> G=nx.Graph(); G.add_edges_from([(0,2),(0,3),(1,2),(1,3)]);
     >>> has_locally_connected_boundary(G)
     True
-    >>> G.add_edges_from([(0,4),(1,4)]);
-    >>> has_locally_connected_boundary(G)
+    >>> H=G;H.add_edges_from([(0,4),(1,4)]);
+    >>> has_locally_connected_boundary(H)
     False
-    >>> G=double(cycle_graph(5));
-    >>> has_locally_connected_boundary(G)
+    >>> K=double(cycle_graph(5));
+    >>> has_locally_connected_boundary(K)
     False
-    >>> G.add_edges_from([((0,0),(5,0)),((0,1),(5,0)),((1,0),(5,0)),((4,1),(5,0)),((1,0),(6,0)),((1,1),(6,0)),((2,0),(6,0)),((0,1),(6,0)),((2,0),(7,0)),((2,1),(7,0)),((3,0),(7,0)),((1,1),(7,0)),((3,0),(8,0)),((3,1),(8,0)),((4,0),(8,0)),((2,1),(8,0)),((4,0),(9,0)),((4,1),(9,0)),((0,0),(9,0)),((3,1),(9,0))]);
-    >>> has_locally_connected_boundary(G)
+    >>> K.add_edges_from([((0,0),(5,0)),((0,1),(5,0)),((1,0),(5,0)),((4,1),(5,0)),((1,0),(6,0)),((1,1),(6,0)),((2,0),(6,0)),((0,1),(6,0)),((2,0),(7,0)),((2,1),(7,0)),((3,0),(7,0)),((1,1),(7,0)),((3,0),(8,0)),((3,1),(8,0)),((4,0),(8,0)),((2,1),(8,0)),((4,0),(9,0)),((4,1),(9,0)),((0,0),(9,0)),((3,1),(9,0))]);
+    >>> has_locally_connected_boundary(K)
     True
     """
     if not assume_two_dimensional:
@@ -2996,6 +2996,16 @@ def geodesic_simple_cycles(G):
             yield cycle
             
 def get_suspension(G):
+    """
+    If G is a suspension return pair of sets of vertices A, B such that G=A*B with |A|=2.
+    >>> G=nx.Graph(); G.add_edges_from([('a','c'),('a','d'),('a','e'),('b','c'),('b','d'),('b','e')]);
+    >>> A,B=get_suspension(G);
+    >>> A=list(A); B=list(B);A.sort();B.sort(); A,B
+    (['a', 'b'], ['c', 'd', 'e'])
+    >>> G=nx.Graph(); G.add_edges_from([('a','A'),('a','B'),('a','C'),('b','A'),('b','B'),('b','C'),('c','A'),('c','B'),('c','C')]);
+    >>> sus=get_suspension(G); sus is None
+    True
+    """
     if len(G)<2:
         return None
     H,nodes=integer_graph(G)
@@ -3005,7 +3015,7 @@ def get_suspension(G):
                 continue
             common_neighbors=link(H,i)&link(H,j)
             if len(common_neighbors)==len(H)-2:
-                return {nodes[i],nodes[j]},common_neighbors
+                return {nodes[i],nodes[j]},{nodes[k] for k in common_neighbors}
     return None
 
 def is_suspension(G):
