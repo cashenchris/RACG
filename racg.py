@@ -5,14 +5,21 @@ import math
 import copy
 
 
-# These are used by the drawing functions draw, draw_Dani_Levcovitz_pair, draw_Dani_Levcovitz_in_diagonal to draw interactive graphs, in which vertices can be repositioned and vertices and edges can be added or removed. Can be commented out if you don't want to draw graphs, or will draw them using some other graph drawing package. 
-import matplotlib.pyplot as plt
-from matplotlib.colors import Colormap
-import netgraph
+
+
+### These are used by the drawing functions draw, draw_Dani_Levcovitz_pair, draw_Dani_Levcovitz_in_diagonal to draw interactive graphs, in which vertices can be repositioned and vertices and edges can be added or removed. If you don't want to draw graphs, or want to use some other graph drawing packages, leave them commented out. If you do want to use the drawing functions provided here, uncomment and make sure you have matplotlib and netgraph installed. 
+
+#import matplotlib.pyplot as plt
+#from matplotlib.colors import Colormap
+#import netgraph
 
 
 
-import cmath # This is only used in graph2tikz to export graph to tikz format for inclusion into latex. 
+
+
+
+#### This is only used in graph2tikz to export graph to tikz format for inclusion into latex. 
+#import cmath
 
 
 
@@ -760,8 +767,8 @@ def Dani_Levcovitz_Delta(Gamma,Lambda):
     for (a,b) in Lambda.edges():
         Delta.add_node(frozenset({a,b}))
     for (e,f) in itertools.combinations(Lambda.edges(),2):
-        if is_induced_square(Gamma,e|f):
-            Delta.add_edge(e,f)
+        if is_induced_square(Gamma,set(e)|set(f)):
+            Delta.add_edge(frozenset(e),frozenset(f))
     return Delta
 
 def find_Dani_Levcovitz_subgraph(Gamma,verbose=False,assume_triangle_free=False,assume_CFS=False):
@@ -2190,6 +2197,88 @@ def find_virtual_factor_separator(G,assume_triangle_free=False,verbose=False):
                             print("C="+str(GC)+", D="+str(GD)+", s="+str(Gs)+", t="+str(Gt))
                         return GC,GD,Gs,Gt
     return None
+
+# --------- Sale-Susse
+
+def SILs(G):
+    """
+    Generate "Separating Intersections of Links" (x,y,Z) with x and y vertices of G and Z subset of vertices of G such that intersection of links of x and y separate G and Z is a connected component not containing x or y.
+    Existence of a SIL is equivalent to Out(W_G) if infinite because it can be used to produce non-commuting partial conjugations. 
+    """
+    H,nodes=integer_graph(G)
+    for u in H:
+        for v in [v for v in distance_two(H,u) if u<v]:
+            for C in nx.connected_components(H.subgraph(set(H)-(link(H,u)&link(H,v)))):
+                if u not in C and v not in C:
+                    yield (nodes[u],nodes[v],{nodes[c] for c in C})
+
+
+def has_SIL(G):
+    SILgenerator=SILs(G)
+    try:
+        next(SILgenerator)
+        return True
+    except StopIteration:
+        return False
+    
+def finite_out(G):
+    """
+    Decided if RACG defined by G has finite outer automorphism group.
+    """
+    return not has_SIL(G)
+    
+
+def STILs(G):
+    """
+    For triangle free connected G, generate "Separating Triple Intersections of Links" (x,y,z,C) such that x,y,z are distinct vertices and C is a connected component of G-(link(x)\cap link(y)\cap link(z)) that does not contain x or y or z.
+    """
+    H,nodes=integer_graph(G)
+    for x in H:
+        for y in [y for y in distance_two(H,x) if x<y]:
+            for z in [z for z in distance_two(H,x) & distance_two(H,y) if y<z]:
+                for C in nx.connected_components(H.subgraph(set(H)-(link(H,x) & link(H,y) & link(H,z)))):
+                    if x not in C and y not in C and z not in C:
+                        yield (nodes[x],nodes[y],nodes[z],{nodes[c] for c in C})
+
+
+def has_STIL(G):
+    STILgen=STILs(G)
+    try:
+        next(STILgen)
+        return True
+    except StopIteration:
+        return False
+    
+def FSILs(G):
+    """
+    For triangle-free connected G, generate "Flexible Separating Intersection of Links" {x,y,z} such that all three of (x,y,z), (y,z,x), and (z,x,y) are SILs.
+    """
+    H,nodes=integer_graph(G)
+    for x in H:
+        for y in [y for y in distance_two(H,x) if x<y]:
+            for z in [z for z in distance_two(H,x) & distance_two(H,y) if y<z]:
+                L=link(H,x) & link(H,y) & link(H,z)
+                if len(L) < max(len(link(H,x) & link(H,y)), len(link(H,y) & link(H,z)), len(link(H,z) & link(H,x))):
+                    continue
+                if max(len({x,y,z}&C) for C in nx.connected_components(H.subgraph(set(H)-L)))<=1:
+                    yield {nodes[x],nodes[y],nodes[z]}
+
+def has_FSIL(G):
+    FSILgen=FSILs(G)
+    try:
+        next(FSILgen)
+        return True
+    except StopIteration:
+        return False
+    
+def large_out(G):
+    """
+    Decide if outer automorphism group of RACG defined by connected triangle-free graph G is "large", in the sense that it has a finite index subgroup the quotients onto rank2 free group. Theorem of Sale-Susse says Out(W_G) is large if and only if G has STIL or FSIL.
+    """
+    return has_FSIL(G) or has_STIL(G)
+
+        
+    
     
 
 
@@ -2277,15 +2366,20 @@ def edges_not_in_any_thick_join(G,precomputed_MPRG_fundamtenal_domain=None):
         if not any(a in S and b in S for S in vertex_supports):
             yield a,b
             
-def MPRG_cut_vertices(G,F):
+def MPRG_cut_vertices(G,F,vertices_to_check=None):
     """
     Given a triangle-free, strongly CFS graph G and fundamental domain F of the MPRG of the RACG W_G, generate vertices of F that are cut vertices of the MPRG.
+    Yield (v,'type n') where v is a vertex of F that is a cut vertex of MPRG(W_G) and type 1/type 2 refer to the two cases of Lemma 6.8.
     """
-    for v in F:
+    if vertices_to_check is None:
+        the_verts=[v for v in F]
+    else:
+        the_verts=vertices_to_check
+    for v in the_verts:
         for a in MPRG_stab(F,v):
             if all(a not in MPRG_stab(F,w) for w in F if w!=v):
                 if link(G,a)<=MPRG_stab(F,v):
-                    yield v,'type 1'
+                    yield v,'type 2'
                     break
         else:
             complementary_components={frozenset(C) for C in nx.connected_components(F.subgraph(set(F)-set([v,])))}
@@ -2300,9 +2394,18 @@ def MPRG_cut_vertices(G,F):
                 if MPRG_stab(F,v)==set(Gamma)&set(Gammaprime):
                     gammasedges={e for e in Gamma.edges()}|{e for e in Gammaprime.edges()}
                     if all(e in gammasedges for e in G.edges()):
-                        yield v, 'type 2'
+                        yield v, 'type 1'
                         break
-            
+
+def has_MPRG_cut_vertices(G):
+    assert(is_strongly_CFS(G))
+    F=MPRG_fundamental_domain(G)
+    cv=MPRG_cut_vertices(G,F)
+    try:
+        next(cv)
+        return True
+    except StopIteration:
+        return False
         
 
 def get_MPRG_ladder(G,rs=None,ss=None,verbose=False,small_first=False, try_hard=False):
@@ -3242,6 +3345,21 @@ def link(G,v):
 def star(G,v):
     return set([v,])|link(G,v)
 
+def separating_stars(G):
+    assert(nx.is_connected(G))
+    for v in G:
+        S=star(G,v)
+        if not nx.is_connected(G.subgraph(set(G)-S)):
+            yield (v,S-{v})
+
+def has_separating_stars(G):
+    ss=separating_stars(G)
+    try:
+        next(ss)
+        return True
+    except StopIteration:
+        return False
+
 
 def twins(G,v):
     """
@@ -3905,6 +4023,20 @@ def Cordes_Levcovitz():
     G.add_edges_from([((0,2),(0,1)), ((0,2),(3,1)), ((1,2),(1,1)), ((1,2),(4,1)), ((2,2),(2,1)),((2,2),(5,1))])
     G.add_edges_from([((0,-1),(0,0)), ((0,-1),(3,0)), ((1,-1),(1,0)), ((1,-1),(4,0)), ((2,-1),(2,0)),((2,-1),(5,0))])
     return G
+
+def crown(n):
+    """
+    Return crown graph on 2n vertices. 
+    Vertices {1...n} and {-1...-n} with edge i-j if and only if |i|!=|j| and sign(i)!=sign(j).
+    """
+    G=nx.Graph()
+    for i in range(1,n+1):
+        for j in range(1,n+1):
+            if i!=j:
+                G.add_edge(i,-j)
+    return G
+            
+    
 
 #--------------------------- for exporting graph 
 def graph2tikz(netgraph_plot_instance):
