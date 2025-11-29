@@ -27,35 +27,39 @@ Export to TikZ and optional visualization
 🔧 Installation
 
 From GitHub:
-
+```bash
 pip install git+https://github.com/cashenchris/RACG.git
-
+```
 
 or clone locally:
-
+```bash
 git clone https://github.com/cashenchris/RACG.git
 cd RACG
 pip install .
+```
 
 📦 Dependencies
 
 Core functionality requires only:
 
-networkx >= 3.2.1
-numpy
+networkx >= 3.2.1  
+numpy  
 
 
 Visualization tools are optional.
 If you wish to draw graphs interactively, uncomment the relevant imports
 in racg.py and install:
 
+```bash
 pip install matplotlib netgraph
-
+```
 
 
 Many functions include doctests. Run all tests via:
 
-python racg.py 
+```bash
+python racg.py
+```
 
 🔁 Relation to RACG Enumeration Dataset
 
