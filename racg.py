@@ -1,35 +1,172 @@
+"""
+racg: graph-based tools for 2-dimensional right-angled Coxeter groups.
+
+This module provides a collection of functions for working with presentation
+graphs of right-angled Coxeter groups (RACGs).  All graphs are represented as
+`networkx.Graph` objects, and the focus is on triangle-free graphs, CFS graphs,
+and the kinds of configurations that arise in quasi-isometry classification
+problems.
+
+Broadly, the module contains tools for:
+
+* Basic graph operations tailored to RACG combinatorics:
+  - links, stars, joins, diagonal graphs, twin modules, etc.
+
+* CFS and strong CFS:
+  - `is_CFS`, `is_strongly_CFS`, `is_minimal_CFS`,
+    and related operations for square-complete subgraphs.
+
+* Twin modules and blow-ups:
+  - `twin_module_graph`, `canonical_blowup`, `clone_vertex`, unfolding operations.
+
+* Maximal product region graph (MPRG):
+  - `MPRG_fundamental_domain`, `MPRG_neighbor_types`, `MPRG_cut_vertices`,
+    and related functions detecting ladders and cut vertices in the MPRG.
+
+* Splittings and JSJ-type structure:
+  - `graph_of_cylinders`, `has_iterated_splittings`, `has_ZZ_RAAG_obstruction`,
+    and functions that detect various kinds of splittings over finite or
+    2–ended subgroups.
+
+* Dani–Levcovitz RAAG systems:
+  - `Dani_Levcovitz`, `find_Dani_Levcovitz_subgraph`, and auxiliary conditions
+    R1–R4, F1–F2 for deciding when a subgraph of the complementary graph defines
+    a finite-index RAAG system.
+
+* Outer automorphism group tests (Sale–Susse):
+  - `SILs`, `STILs`, `FSILs`, `finite_out`, `large_out`, implementing
+    combinatorial criteria for the size of Out(W_G).
+
+* Examples and test graphs:
+  - explicit minimal CFS / non-CFS examples, strongly CFS examples,
+    and graphs from the literature.
+
+Conventions and assumptions
+---------------------------
+
+* All graphs are simple, undirected `networkx.Graph` instances with finite
+  vertex set.
+
+* Many functions *assume* that the input graph is triangle-free, CFS, or
+  one-ended.  In such cases the docstring notes the hypotheses, and the
+  function may raise `InputError` or assert if they are violated.
+
+* Vertices can be arbitrary hashable objects (ints, strings, tuples, ...),
+  but some algorithms internally convert to an "integer graph" via
+  `integer_graph(G)` for speed.
+
+External dependencies
+---------------------
+
+Core functions require:
+
+* `networkx` (tested with version 3.2.1)
+
+Additional optional drawing and export functions (such as `draw`,
+`draw_Dani_Levcovitz_pair`, `graph2tikz`) also use:
+
+* `matplotlib`
+* `netgraph`
+* `cmath`  (for certain TikZ exports)
+
+These imports are commented out by default at the top of this file; you may
+uncomment them if you want to use the interactive drawing utilities.
+
+This file is intended for research use; it is not a polished general-purpose
+graph library.  Many functions are tuned to specific RACG/RAAG problems
+arising in quasi-isometry classification and related projects.
+"""
+
+
+
+
+
+__all__ = [
+    # Draw interactive graph
+    "draw",
+    
+    # CFS & strong CFS
+    "is_CFS",
+    "is_strongly_CFS",
+    "is_minsquare",
+    "is_square_complete",
+    "diagonal_graph",
+
+    # Obstructions to being QI to a RAAG
+    "has_ZZ_RAAG_obstruction",
+    "has_iterated_splittings",
+    "has_cycle_of_cylinders",
+    "has_compliant_cycle",
+    "get_MPRG_ladder",
+
+    # Doubles and near doubles, Davis-Januszkiewicz
+    "is_double",
+    "double",
+    "link_double",
+    "find_in_iterated_double",
+    "is_near_double",
+    "is_coarse_near_double",
+    "clone_vertex",
+    "canonical_blowup",
+    
+    # Dani–Levcovitz visible RAAG subgroups
+    "Dani_Levcovitz",
+    "find_Dani_Levcovitz_subgraph",
+
+    # graph of groups splittings
+    "is_one_ended",
+    "has_two_ended_splitting",
+    "graph_of_cylinders",
+    "GSD",
+
+    # boundary and Morse boundary, Fioravanti-Karrer, Camp-Mihalik
+    "Fioravanti_Karrer_condition",
+    "has_locally_connected_boundary",
+
+    # outer automorphism group, Sale-Susse
+    "finite_out",
+    "large_out",
+
+    
+    # MPRG / product regions
+    "MPRG_fundamental_domain",
+    "MPRG_neighbor_types",
+    "MPRG_cut_vertices",
+
+    # example graph
+    "cycle_graph",
+    "suspension",
+    "circulant",
+    "nested_suspension",
+    "Pallavi",
+    "crown",
+
+
+  
+]
+
+
+
+
+
+
+
+
 import networkx as nx # Works with networkx 3.2.1. (Prior to 3.1, nx.simple_cycles only works for directed graphs.)
 from networkx.algorithms import bipartite
 import itertools
 import math
 import copy
 
-
-
-
-### These are used by the drawing functions draw, draw_Dani_Levcovitz_pair, draw_Dani_Levcovitz_in_diagonal to draw interactive graphs, in which vertices can be repositioned and vertices and edges can be added or removed. If you don't want to draw graphs, or want to use some other graph drawing packages, leave them commented out. If you do want to use the drawing functions provided here, uncomment and make sure you have matplotlib and netgraph installed. 
-
+# For drawing graphs
 #import matplotlib.pyplot as plt
 #from matplotlib.colors import Colormap
 #import netgraph
 
 
-
-
-
-
-#### This is only used in graph2tikz to export graph to tikz format for inclusion into latex. 
+#### cmath is only used in graph2tikz to export graph to tikz format for inclusion into latex. 
 #import cmath
 
-
-
-
-
-"""
-All of these functions work with graphs represented by nx.Graph class. 
-
-Most implementations are currently for triangle-free graphs. May give wrong answers if the graph has triangles!
-"""
 
 
 
@@ -110,6 +247,22 @@ def is_CFS(G,precomputed_diagonal_graph=None):
     """
     True if G is a CFS graph, which means that, modulo deleting a join, the square graph of G contains a component with full support.
 
+    Parameters
+    ----------
+    G : networkx.Graph
+        Finite simple graph.
+
+    precomputed_diagonal_graph : networkx.Graph or None, optional
+        If provided, this should be the diagonal graph of G (see
+        `diagonal_graph`).  This can speed up repeated calls when the
+        diagonal graph is reused.
+
+    Returns
+    -------
+    bool
+        True if G is CFS, False otherwise.
+
+
     >>> G=cycle_graph(4); is_CFS(G)
     True
     >>> G=cycle_graph(5); is_CFS(G)
@@ -133,6 +286,19 @@ def is_CFS(G,precomputed_diagonal_graph=None):
 def is_strongly_CFS(G):
     """
     Decide if the square graph of G is connected and has full support.
+
+    Parameters
+    ----------
+    G : networkx.Graph
+        Finite simple graph.
+
+    precomputed_diagonal_graph : networkx.Graph or None, optional
+        Diagonal graph of G, if already computed.
+
+    Returns
+    -------
+    bool
+        True if G is strongly CFS, False otherwise.
 
     >>> G=circulant(11,3); is_strongly_CFS(G)
     True
@@ -3618,7 +3784,8 @@ def vertex_is_clonable(G,v):
 
 def clonable_vertices(G,twin_free=False):
     """
-    Generate clonable vertices of G.
+    Generate clonable vertices of G. These are vertices such that addition of a clone gives a quasiisometry between corresponding RACGs.
+
     If twin_free=True yield at most one vertex from each twin module.
     """
     if twin_free:
@@ -3635,6 +3802,9 @@ def clonable_vertices(G,twin_free=False):
                 yield v
 
 def clone_vertex(G,v):
+    """
+    Add a new vertex that is clone of v by adding a cone vertex on link(v).
+    """
     new_vertex=0
     while new_vertex in G:
         new_vertex+=1
